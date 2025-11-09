@@ -173,10 +173,10 @@ class GachaAutomation:
 
         return text.strip()
 
-    def scan_gacha_result(self, screenshot: Optional[Any] = None,
+    def scan_screen_roi(self, screenshot: Optional[Any] = None,
                          roi_names: Optional[List[str]] = None) -> Dict[str, Any]:
         """
-        Scan kết quả gacha theo các vùng ROI đã định nghĩa.
+        Scan màn hình theo các vùng ROI đã định nghĩa (thống nhất với festivals).
 
         Args:
             screenshot: Screenshot để scan, None = chụp mới
@@ -208,16 +208,16 @@ class GachaAutomation:
                     logger.warning(f"✗ {roi_name}: {e}")
                     results[roi_name] = ""
 
-            logger.info(f"Scanned {len(results)} Gacha ROIs")
+            logger.info(f"Scanned {len(results)} ROIs")
             return results
 
         except Exception as e:
-            logger.error(f"✗ Scan gacha result: {e}")
+            logger.error(f"✗ Scan screen ROI: {e}")
             return {}
 
-    def run_gacha_pull(self, pull_data: Dict[str, Any], pull_idx: int,
+    def run_gacha_stage(self, pull_data: Dict[str, Any], pull_idx: int,
                       pull_type: str = "single") -> Dict[str, Any]:
-        """Chạy một gacha pull."""
+        """Chạy một gacha stage (thống nhất với festivals: run_xxx_stage)."""
         logger.info(f"\n{'='*50}\nPULL {pull_idx}: {pull_type.upper()}\n{'='*50}")
 
         folder_name = f"gacha_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -265,7 +265,7 @@ class GachaAutomation:
 
             # Step 7: Scan result
             logger.info("Step 7: Scan result")
-            scan_results = self.scan_gacha_result(screenshot_result)
+            scan_results = self.scan_screen_roi(screenshot_result)
 
             # Extract rarity and character info
             rarity = scan_results.get('rarity', '')
@@ -291,90 +291,192 @@ class GachaAutomation:
             logger.error(f"✗ Pull {pull_idx}: {e}")
             return result
 
-    def run_multiple_pulls(self, num_pulls: int, pull_type: str = "single",
-                          output_path: Optional[str] = None) -> bool:
-        """Chạy nhiều gacha pulls."""
+    def run_all_pulls(self, data_path: Optional[str] = None, num_pulls: Optional[int] = None,
+                      pull_type: str = "single", output_path: Optional[str] = None) -> bool:
+        """
+        Chạy tất cả pulls (thống nhất với festivals: run_all_xxx).
+        
+        Args:
+            data_path: Đường dẫn đến file CSV/JSON chứa test data (mode 1)
+            num_pulls: Số lượng pulls để chạy (mode 2, nếu không có data_path)
+            pull_type: Loại pull ('single' hoặc 'multi', chỉ dùng cho mode 2)
+            output_path: Đường dẫn output result (None = auto-generate)
+            
+        Returns:
+            bool: True nếu thành công
+        """
         try:
-            # Setup output
-            if output_path is None:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_path = os.path.join(self.results_dir, f"gacha_results_{timestamp}.csv")
+            # Mode 1: Load from data file
+            if data_path:
+                test_data = load_json(data_path) if data_path.endswith('.json') else load_csv(data_path)
+                if not test_data:
+                    logger.error("✗ No data loaded")
+                    return False
+                
+                # Setup output
+                if output_path is None:
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    output_path = os.path.join(self.results_dir, f"gacha_batch_{timestamp}.csv")
+                
+                result_writer = ResultWriter(output_path)
+                logger.info(f"Batch sessions: {len(test_data)} | Output: {output_path}")
+                
+                all_success = True
+                
+                # Process each session from data
+                for idx, session_data in enumerate(test_data, 1):
+                    session_id = session_data.get('session_id', idx)
+                    session_num_pulls = int(session_data.get('num_pulls', 1))
+                    session_pull_type = session_data.get('pull_type', 'single')
+                    
+                    # Override timing configs if provided
+                    if 'wait_after_pull' in session_data:
+                        self.wait_after_pull = float(session_data['wait_after_pull'])
+                    if 'wait_after_touch' in session_data:
+                        self.wait_after_touch = float(session_data['wait_after_touch'])
+                    
+                    logger.info(f"\n{'='*60}\nSESSION {idx}/{len(test_data)}: {session_num_pulls} {session_pull_type} pull(s)\n{'='*60}")
+                    
+                    # Run pulls for this session
+                    session_start = datetime.now()
+                    successful_pulls = 0
+                    rarity_counts = {}
+                    
+                    for pull_idx in range(1, session_num_pulls + 1):
+                        pull_result = self.run_gacha_stage({}, pull_idx, session_pull_type)
+                        if pull_result['success']:
+                            successful_pulls += 1
+                            rarity = pull_result.get('rarity', 'Unknown')
+                            rarity_counts[rarity] = rarity_counts.get(rarity, 0) + 1
+                        time.sleep(1.0)
+                    
+                    session_end = datetime.now()
+                    session_duration = (session_end - session_start).total_seconds()
+                    session_success = successful_pulls == session_num_pulls
+                    
+                    if not session_success:
+                        all_success = False
+                    
+                    # Add session summary
+                    result_writer.add_result(
+                        test_case={
+                            'session_id': session_id,
+                            'pull_type': session_pull_type,
+                            'num_pulls': session_num_pulls,
+                            'successful_pulls': successful_pulls,
+                            'failed_pulls': session_num_pulls - successful_pulls,
+                            'success_rate': f"{(successful_pulls/session_num_pulls*100):.1f}%",
+                            'duration_seconds': f"{session_duration:.1f}",
+                            'rarity_distribution': str(rarity_counts),
+                        },
+                        result=ResultWriter.RESULT_OK if session_success else ResultWriter.RESULT_NG,
+                        error_message=None if session_success else f"Only {successful_pulls}/{session_num_pulls} pulls succeeded"
+                    )
+                    
+                    logger.info(f"Session {idx} completed: {successful_pulls}/{session_num_pulls} successful")
+                    logger.info(f"Rarity distribution: {rarity_counts}")
+                    time.sleep(2.0)
+                
+                # Save results
+                result_writer.write()
+                result_writer.print_summary()
+                return all_success
+            
+            # Mode 2: Direct num_pulls
+            elif num_pulls:
+                # Setup output
+                if output_path is None:
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    output_path = os.path.join(self.results_dir, f"gacha_results_{timestamp}.csv")
 
-            result_writer = ResultWriter(output_path)
-            logger.info(f"Gacha pulls: {num_pulls} {pull_type} | Output: {output_path}")
+                result_writer = ResultWriter(output_path)
+                logger.info(f"Gacha pulls: {num_pulls} {pull_type} | Output: {output_path}")
 
-            all_results = []
+                all_results = []
 
-            # Process each pull
-            for idx in range(1, num_pulls + 1):
-                pull_result = self.run_gacha_pull({}, idx, pull_type)
-                all_results.append(pull_result)
+                # Process each pull
+                for idx in range(1, num_pulls + 1):
+                    pull_result = self.run_gacha_stage({}, idx, pull_type)
+                    all_results.append(pull_result)
 
-                # Add to result writer
-                test_case = {
-                    'pull_number': idx,
-                    'pull_type': pull_type,
-                    'rarity': pull_result.get('rarity', ''),
-                    'character': pull_result.get('character', ''),
-                }
-                result_writer.add_result(test_case,
-                                       ResultWriter.RESULT_OK if pull_result['success'] else ResultWriter.RESULT_NG,
-                                       error_message=None if pull_result['success'] else "Pull failed")
+                    # Add to result writer
+                    test_case = {
+                        'pull_number': idx,
+                        'pull_type': pull_type,
+                        'rarity': pull_result.get('rarity', ''),
+                        'character': pull_result.get('character', ''),
+                    }
+                    result_writer.add_result(test_case,
+                                           ResultWriter.RESULT_OK if pull_result['success'] else ResultWriter.RESULT_NG,
+                                           error_message=None if pull_result['success'] else "Pull failed")
 
-                time.sleep(1.0)
+                    time.sleep(1.0)
 
-            # Save results
-            result_writer.write()
-            result_writer.print_summary()
+                # Save results
+                result_writer.write()
+                result_writer.print_summary()
 
-            # Summary statistics
-            successful_pulls = [r for r in all_results if r['success']]
-            rarity_counts = {}
-            for r in successful_pulls:
-                rarity = r.get('rarity', 'Unknown')
-                rarity_counts[rarity] = rarity_counts.get(rarity, 0) + 1
+                # Summary statistics
+                successful_pulls = [r for r in all_results if r['success']]
+                rarity_counts = {}
+                for r in successful_pulls:
+                    rarity = r.get('rarity', 'Unknown')
+                    rarity_counts[rarity] = rarity_counts.get(rarity, 0) + 1
 
-            logger.info(f"\nGacha Summary:")
-            logger.info(f"Total pulls: {num_pulls}")
-            logger.info(f"Successful: {len(successful_pulls)}")
-            logger.info(f"Rarity distribution: {rarity_counts}")
+                logger.info(f"\nGacha Summary:")
+                logger.info(f"Total pulls: {num_pulls}")
+                logger.info(f"Successful: {len(successful_pulls)}")
+                logger.info(f"Rarity distribution: {rarity_counts}")
 
-            return True
+                return True
+            
+            else:
+                logger.error("✗ Either 'data_path' or 'num_pulls' must be provided")
+                return False
 
         except Exception as e:
-            logger.error(f"✗ Multiple pulls: {e}")
+            logger.error(f"✗ Run all pulls: {e}")
             return False
 
-    def run(self, config: Dict[str, Any]) -> bool:
-        """Entry point chính cho Gacha automation."""
+    def run(self, config: Optional[Dict[str, Any]] = None, data_path: Optional[str] = None) -> bool:
+        """
+        Entry point chính cho Gacha automation (thống nhất với festivals).
+        
+        Supports 2 modes:
+        1. Config mode: Truyền config dict với num_pulls, pull_type
+        2. Data mode: Truyền data_path đến CSV/JSON file
+        
+        Args:
+            config: Configuration dict (mode 1)
+            data_path: Path to CSV/JSON data file (mode 2)
+            
+        Returns:
+            bool: True nếu thành công
+            
+        Example usage:
+            # Mode 1: Direct config
+            gacha.run(config={'num_pulls': 10, 'pull_type': 'single'})
+            
+            # Mode 2: Load from file
+            gacha.run(data_path='./data/gacha_tests.csv')
+        """
         logger.info("="*60 + "\nGACHA AUTOMATION START\n" + "="*60)
 
         if not self.agent.is_device_connected():
             logger.error("✗ Device not connected")
             return False
-
-        num_pulls = config.get('num_pulls', 1)
-        pull_type = config.get('pull_type', 'single')
-
-        success = self.run_multiple_pulls(num_pulls, pull_type)
+        
+        # Mode 2: Load from data file
+        if data_path:
+            success = self.run_all_pulls(data_path=data_path)
+        # Mode 1: Direct config
+        elif config:
+            num_pulls = config.get('num_pulls', 1)
+            pull_type = config.get('pull_type', 'single')
+            success = self.run_all_pulls(num_pulls=num_pulls, pull_type=pull_type)
+        else:
+            logger.error("✗ Either 'config' or 'data_path' must be provided")
+            return False
+        
         logger.info("="*60 + f"\n{'✓ COMPLETED' if success else '✗ FAILED'}\n" + "="*60)
         return success
-
-
-if __name__ == '__main__':
-    from core.agent import Agent
-
-    agent = Agent()
-    config = {
-        'templates_path': './templates',
-        'snapshot_dir': './result/gacha/snapshots',
-        'results_dir': './result/gacha/results',
-        'wait_after_touch': 1.0,
-    }
-
-    gacha = GachaAutomation(agent, config)
-    gacha_config = {
-        'num_pulls': 10,
-        'pull_type': 'single'
-    }
-    gacha.run(gacha_config)

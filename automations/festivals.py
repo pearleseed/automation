@@ -489,20 +489,28 @@ class FestivalAutomation:
             logger.error(f"✗ Scan screen ROI with detector: {e}")
             return {}
 
-    def compare_with_csv(self, extracted_data: Dict[str, Any],
-                        expected_data: Dict[str, Any]) -> Tuple[bool, str]:
+    def compare_results(self, extracted_data: Dict[str, Any],
+                       expected_data: Dict[str, Any],
+                       return_details: bool = True) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
         """
-        So sánh dữ liệu trích xuất với expected data từ CSV.
+        So sánh dữ liệu OCR/Detector với expected data từ CSV.
+        Hỗ trợ cả simple OCR format (Dict[str, str]) và detector format (Dict[str, Dict]).
 
         Args:
-            extracted_data: Dữ liệu OCR từ ROI (có thể là Dict[str, str] hoặc Dict[str, Dict])
+            extracted_data: Dữ liệu từ OCR hoặc Detector
+                - Simple format: Dict[str, str] từ scan_screen_roi()
+                - Detector format: Dict[str, Dict] từ scan_screen_roi_with_detector()
             expected_data: Dữ liệu mong đợi từ CSV
+            return_details: Có trả về detailed results không (default: True)
 
         Returns:
-            Tuple[bool, str]: (is_match, message)
+            Tuple[bool, str, Optional[Dict]]: (is_match, message, detailed_results)
+                - is_match: True nếu match, False nếu không
+                - message: Thông điệp tóm tắt
+                - detailed_results: Chi tiết từng field (None nếu return_details=False)
         """
         if not expected_data:
-            return True, "No expected data"
+            return True, "No expected data", None if not return_details else {}
 
         # Lọc ra các field có trong FESTIVALS_ROI_CONFIG (bỏ qua meta fields)
         roi_fields = set(FESTIVALS_ROI_CONFIG.keys())
@@ -510,93 +518,39 @@ class FestivalAutomation:
                            if k in roi_fields and v}  # Chỉ compare field có value
 
         if not comparable_fields:
-            return True, "No comparable fields"
+            return True, "No comparable fields", None if not return_details else {}
 
         matches = 0
         mismatches = []
+        detailed_results = {} if return_details else None
 
         for field, expected_value in comparable_fields.items():
             if field not in extracted_data:
                 mismatches.append(f"{field}:missing")
+                if return_details:
+                    detailed_results[field] = {'status': 'missing', 'expected': expected_value}
                 continue
 
-            # Handle detection result format (Dict) vs simple OCR format (str)
-            if isinstance(extracted_data[field], dict):
-                # Detection result format
-                extracted_value = str(extracted_data[field].get('text', '')).strip()
+            # Handle both simple OCR format (str) and detector format (dict)
+            field_data = extracted_data[field]
+            if isinstance(field_data, dict):
+                # Detector format: extract details
+                extracted_text = field_data.get('text', '').strip()
+                detected = field_data.get('detected', False)
+                detection_count = field_data.get('detection_count', 0)
+                has_quantity = field_data.get('has_quantity', False)
+                quantity = field_data.get('quantity', 0)
             else:
-                # Simple OCR format
-                extracted_value = str(extracted_data[field]).strip()
+                # Simple OCR format: just text
+                extracted_text = str(field_data).strip()
+                detected = False
+                detection_count = 0
+                has_quantity = False
+                quantity = 0
 
             expected_value_str = str(expected_value).strip()
 
             # Normalize để so sánh (case-insensitive, remove spaces)
-            extracted_normalized = extracted_value.lower().replace(' ', '')
-            expected_normalized = expected_value_str.lower().replace(' ', '')
-
-            if extracted_normalized == expected_normalized:
-                matches += 1
-            elif extracted_normalized in expected_normalized or expected_normalized in extracted_normalized:
-                # Partial match cũng tính là OK
-                matches += 1
-                logger.debug(f"Partial match: {field} - '{extracted_value}' ~ '{expected_value_str}'")
-            else:
-                mismatches.append(f"{field}:'{extracted_value}'≠'{expected_value_str}'")
-
-        total = len(comparable_fields)
-        is_ok = matches == total
-
-        if is_ok:
-            message = f"✓ {matches}/{total} matched"
-        else:
-            message = f"✗ {matches}/{total} matched ({', '.join(mismatches[:3])})"
-
-        return is_ok, message
-
-    def compare_with_csv_enhanced(self, extracted_data: Dict[str, Dict[str, Any]],
-                                 expected_data: Dict[str, Any]) -> Tuple[bool, str, Dict[str, Any]]:
-        """
-        So sánh dữ liệu với detection info (enhanced version).
-        Kết hợp cả OCR text và detection để verify chính xác hơn.
-
-        Args:
-            extracted_data: Dữ liệu từ scan_screen_roi_with_detector (Dict[str, Dict])
-            expected_data: Dữ liệu mong đợi từ CSV
-
-        Returns:
-            Tuple[bool, str, Dict]: (is_match, message, detailed_results)
-        """
-        if not expected_data:
-            return True, "No expected data", {}
-
-        # Lọc ra các field có trong FESTIVALS_ROI_CONFIG
-        roi_fields = set[str](FESTIVALS_ROI_CONFIG.keys())
-        comparable_fields = {k: v for k, v in expected_data.items()
-                           if k in roi_fields and v}
-
-        if not comparable_fields:
-            return True, "No comparable fields", {}
-
-        matches = 0
-        mismatches = []
-        detailed_results = {}
-
-        for field, expected_value in comparable_fields.items():
-            if field not in extracted_data:
-                mismatches.append(f"{field}:missing")
-                detailed_results[field] = {'status': 'missing', 'expected': expected_value}
-                continue
-
-            roi_result = extracted_data[field]
-            extracted_text = roi_result.get('text', '').strip()
-            detected = roi_result.get('detected', False)
-            detection_count = roi_result.get('detection_count', 0)
-            has_quantity = roi_result.get('has_quantity', False)
-            quantity = roi_result.get('quantity', 0)
-
-            expected_value_str = str(expected_value).strip()
-
-            # Normalize
             extracted_normalized = extracted_text.lower().replace(' ', '')
             expected_normalized = expected_value_str.lower().replace(' ', '')
 
@@ -605,26 +559,28 @@ class FestivalAutomation:
             if extracted_normalized == expected_normalized:
                 text_match = True
             elif extracted_normalized in expected_normalized or expected_normalized in extracted_normalized:
+                # Partial match cũng tính là OK
                 text_match = True
+                logger.debug(f"Partial match: {field} - '{extracted_text}' ~ '{expected_value_str}'")
 
-            # Detailed result
-            result_detail = {
-                'status': 'match' if text_match else 'mismatch',
-                'extracted_text': extracted_text,
-                'expected': expected_value_str,
-                'detected': detected,
-                'detection_count': detection_count,
-                'has_quantity': has_quantity,
-                'quantity': quantity
-            }
-            detailed_results[field] = result_detail
+            # Store detailed results if requested
+            if return_details:
+                detailed_results[field] = {
+                    'status': 'match' if text_match else 'mismatch',
+                    'extracted_text': extracted_text,
+                    'expected': expected_value_str,
+                    'detected': detected,
+                    'detection_count': detection_count,
+                    'has_quantity': has_quantity,
+                    'quantity': quantity
+                }
 
             if text_match:
                 matches += 1
                 if detected:
                     logger.debug(f"✓ {field}: text='{extracted_text}', detected={detection_count} objects")
                 else:
-                    logger.debug(f"✓ {field}: text='{extracted_text}' (no detection)")
+                    logger.debug(f"✓ {field}: text='{extracted_text}'")
             else:
                 mismatches.append(f"{field}:'{extracted_text}'≠'{expected_value_str}'")
 
@@ -689,12 +645,12 @@ class FestivalAutomation:
             if use_detector and self.detector is not None:
                 # Sử dụng detector + OCR
                 extracted_before = self.scan_screen_roi_with_detector(screenshot_after, pre_battle_rois)
-                is_ok_before, msg_before, details_before = self.compare_with_csv_enhanced(extracted_before, stage_data)
+                is_ok_before, msg_before, details_before = self.compare_results(extracted_before, stage_data)
                 logger.info(f"Pre-battle check (with detector): {msg_before}")
             else:
                 # Chỉ OCR truyền thống
                 extracted_before = self.scan_screen_roi(screenshot_after, pre_battle_rois)
-                is_ok_before, msg_before = self.compare_with_csv(extracted_before, stage_data)
+                is_ok_before, msg_before, _ = self.compare_results(extracted_before, stage_data, return_details=False)
                 logger.info(f"Pre-battle check: {msg_before}")
 
             # Steps 7-10: Battle flow
@@ -723,12 +679,12 @@ class FestivalAutomation:
             if use_detector and self.detector is not None:
                 # Sử dụng detector + OCR
                 extracted_after = self.scan_screen_roi_with_detector(screenshot_result, post_battle_rois)
-                is_ok_after, msg_after, details_after = self.compare_with_csv_enhanced(extracted_after, stage_data)
+                is_ok_after, msg_after, details_after = self.compare_results(extracted_after, stage_data)
                 logger.info(f"Post-battle check (with detector): {msg_after}")
             else:
                 # Chỉ OCR truyền thống
                 extracted_after = self.scan_screen_roi(screenshot_result, post_battle_rois)
-                is_ok_after, msg_after = self.compare_with_csv(extracted_after, stage_data)
+                is_ok_after, msg_after, _ = self.compare_results(extracted_after, stage_data, return_details=False)
                 logger.info(f"Post-battle check: {msg_after}")
 
             # Steps 14-15: Close

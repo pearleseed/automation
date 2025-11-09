@@ -127,13 +127,23 @@ results = festival.scan_screen_roi_with_detector(
 }
 ```
 
-### 3. `compare_with_csv_enhanced()`
-So sánh dữ liệu với detection info (enhanced version).
+### 3. `compare_results()`
+So sánh dữ liệu OCR/Detector với expected data từ CSV.
+Hỗ trợ cả simple OCR format và detector format.
 
 ```python
-is_ok, message, details = festival.compare_with_csv_enhanced(
-    extracted_data=results,  # Từ scan_screen_roi_with_detector
-    expected_data=csv_data
+# Với detector (trả về details)
+is_ok, message, details = festival.compare_results(
+    extracted_data=results,  # Từ scan_screen_roi_with_detector() hoặc scan_screen_roi()
+    expected_data=csv_data,
+    return_details=True  # Default
+)
+
+# Chỉ OCR (không cần details)
+is_ok, message, _ = festival.compare_results(
+    extracted_data=ocr_results,
+    expected_data=csv_data,
+    return_details=False  # Nhanh hơn
 )
 
 # Details format:

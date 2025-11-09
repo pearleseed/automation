@@ -177,9 +177,13 @@ config/secrets.json
 *.sqlite3
 
 # Model checkpoints (uncomment if you want to keep them)
-# *.pt
-# *.pth
-# *.onnx
+*.pt
+*.pth
+*.onnx
+
+# Data files in data/ folder
+data/*.json
+data/*.csv
 
 # Airtest specific
 .airtest/
