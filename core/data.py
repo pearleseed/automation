@@ -1,5 +1,5 @@
 """
-Data Module - Quản lý đọc/ghi dữ liệu CSV và JSON
+Data Module - CSV and JSON data read/write management
 """
 
 import csv
@@ -16,48 +16,48 @@ logger = get_logger(__name__)
 
 def load_csv(file_path: str, encoding: str = 'utf-8') -> List[Dict[str, Any]]:
     """
-    Đọc dữ liệu từ file CSV.
+    Read data from CSV file.
 
     Args:
-        file_path (str): Đường dẫn file CSV
-        encoding (str): Encoding của file (mặc định: utf-8)
+        file_path (str): CSV file path
+        encoding (str): File encoding (default: utf-8)
 
     Returns:
-        List[Dict[str, Any]]: Danh sách dictionary
+        List[Dict[str, Any]]: List of dictionaries
 
     Raises:
-        FileNotFoundError: Nếu file không tồn tại
+        FileNotFoundError: If file does not exist
     """
     if not os.path.exists(file_path):
-        logger.error(f"❌ File not found: {file_path}")
+        logger.error(f" File not found: {file_path}")
         raise FileNotFoundError(f"File not found: {file_path}")
 
     try:
         with open(file_path, mode='r', encoding=encoding) as f:
             data = list(csv.DictReader(f))
-        logger.info(f"✅ Loaded {len(data)} rows from CSV: {file_path}")
+        logger.info(f" Loaded {len(data)} rows from CSV: {file_path}")
         return data
     except Exception as e:
-        logger.error(f"❌ Error loading CSV: {e}")
+        logger.error(f" Error loading CSV: {e}")
         return []
 
 
 def load_json(file_path: str, encoding: str = 'utf-8') -> List[Dict[str, Any]]:
     """
-    Đọc dữ liệu từ file JSON.
+    Read data from JSON file.
 
     Args:
-        file_path (str): Đường dẫn file JSON
-        encoding (str): Encoding của file (mặc định: utf-8)
+        file_path (str): JSON file path
+        encoding (str): File encoding (default: utf-8)
 
     Returns:
-        List[Dict[str, Any]]: Danh sách dictionary
+        List[Dict[str, Any]]: List of dictionaries
 
     Raises:
-        FileNotFoundError: Nếu file không tồn tại
+        FileNotFoundError: If file does not exist
     """
     if not os.path.exists(file_path):
-        logger.error(f"❌ File not found: {file_path}")
+        logger.error(f" File not found: {file_path}")
         raise FileNotFoundError(f"File not found: {file_path}")
 
     try:
@@ -70,38 +70,38 @@ def load_json(file_path: str, encoding: str = 'utf-8') -> List[Dict[str, Any]]:
         elif isinstance(data, dict):
             result = [data]
         else:
-            logger.warning(f"⚠️ Unexpected JSON type: {type(data)}, returning empty list")
+            logger.warning(f" Unexpected JSON type: {type(data)}, returning empty list")
             result = []
 
-        logger.info(f"✅ Loaded {len(result)} items from JSON: {file_path}")
+        logger.info(f" Loaded {len(result)} items from JSON: {file_path}")
         return result
 
     except json.JSONDecodeError as e:
-        logger.error(f"❌ JSON decode error: {e}")
+        logger.error(f" JSON decode error: {e}")
         return []
     except Exception as e:
-        logger.error(f"❌ Error loading JSON: {e}")
+        logger.error(f" Error loading JSON: {e}")
         return []
 
 
 # ==================== DATA WRITING ====================
 
-def write_csv(file_path: str, data: List[Dict[str, Any]], 
+def write_csv(file_path: str, data: List[Dict[str, Any]],
               encoding: str = 'utf-8', mode: str = 'w') -> bool:
     """
-    Ghi danh sách dictionary vào file CSV.
+    Write list of dictionaries to CSV file.
 
     Args:
-        file_path (str): Đường dẫn file CSV
-        data (List[Dict[str, Any]]): Dữ liệu cần ghi
-        encoding (str): Encoding của file
-        mode (str): Mode ghi file ('w' = overwrite, 'a' = append)
+        file_path (str): CSV file path
+        data (List[Dict[str, Any]]): Data to write
+        encoding (str): File encoding
+        mode (str): File write mode ('w' = overwrite, 'a' = append)
 
     Returns:
-        bool: True nếu thành công
+        bool: True if successful
     """
     if not data:
-        logger.warning("⚠️ No data to write")
+        logger.warning(" No data to write")
         return False
 
     try:
@@ -120,11 +120,11 @@ def write_csv(file_path: str, data: List[Dict[str, Any]],
 
             writer.writerows(data)
 
-        logger.info(f"✅ Wrote {len(data)} rows to CSV: {file_path}")
+        logger.info(f" Wrote {len(data)} rows to CSV: {file_path}")
         return True
 
     except Exception as e:
-        logger.error(f"❌ Error writing CSV: {e}")
+        logger.error(f" Error writing CSV: {e}")
         return False
 
 
@@ -132,8 +132,8 @@ def write_csv(file_path: str, data: List[Dict[str, Any]],
 
 class ResultWriter:
     """
-    Class tiện ích để ghi kết quả test/automation ra CSV.
-    Hỗ trợ buffering để tối ưu hiệu năng.
+    Utility class for writing test/automation results to CSV.
+    Supports buffering for performance optimization.
     """
 
     # Result statuses
@@ -144,11 +144,11 @@ class ResultWriter:
 
     def __init__(self, output_path: str, auto_write: bool = False):
         """
-        Khởi tạo ResultWriter.
+        Initialize ResultWriter.
 
         Args:
-            output_path (str): Đường dẫn file CSV output
-            auto_write (bool): Tự động ghi sau mỗi lần add_result
+            output_path (str): CSV output file path
+            auto_write (bool): Auto-write after each add_result call
         """
         self.output_path = output_path
         self.auto_write = auto_write
@@ -165,13 +165,13 @@ class ResultWriter:
                   error_message: Optional[str] = None,
                   extra_fields: Optional[Dict[str, Any]] = None) -> None:
         """
-        Thêm một kết quả test case.
+        Add a test case result.
 
         Args:
-            test_case (Dict[str, Any]): Dictionary chứa thông tin test case
-            result (str): Kết quả (OK, NG, SKIP, ERROR)
-            error_message (Optional[str]): Thông báo lỗi nếu có
-            extra_fields (Optional[Dict[str, Any]]): Các fields bổ sung
+            test_case (Dict[str, Any]): Dictionary containing test case info
+            result (str): Result (OK, NG, SKIP, ERROR)
+            error_message (Optional[str]): Error message if any
+            extra_fields (Optional[Dict[str, Any]]): Additional fields
         """
         row_data = test_case.copy()
 
@@ -194,16 +194,16 @@ class ResultWriter:
 
     def write(self, clear_after_write: bool = False) -> bool:
         """
-        Ghi tất cả kết quả ra file CSV.
+        Write all results to CSV file.
 
         Args:
-            clear_after_write (bool): Xóa buffer sau khi ghi
+            clear_after_write (bool): Clear buffer after writing
 
         Returns:
-            bool: True nếu thành công
+            bool: True if successful
         """
         if not self.results:
-            logger.warning("⚠️ No results to write")
+            logger.warning(" No results to write")
             return False
 
         success = write_csv(self.output_path, self.results)
@@ -214,16 +214,16 @@ class ResultWriter:
         return success
 
     def clear(self) -> None:
-        """Xóa buffer kết quả."""
+        """Clear results buffer."""
         self.results.clear()
-        logger.debug("🗑️ Results buffer cleared")
+        logger.debug(" Results buffer cleared")
 
     def get_summary(self) -> Dict[str, int]:
         """
-        Lấy thống kê kết quả.
+        Get results summary.
 
         Returns:
-            Dict[str, int]: Dictionary chứa số lượng mỗi loại kết quả
+            Dict[str, int]: Dictionary containing count of each result type
         """
         summary = {
             self.RESULT_OK: 0,
@@ -245,7 +245,7 @@ class ResultWriter:
         return summary
 
     def print_summary(self) -> None:
-        """In thống kê kết quả ra logger."""
+        """Print results summary to logger."""
         summary = self.get_summary()
         total = sum(summary.values())
 
@@ -267,10 +267,10 @@ class ResultWriter:
 
     @property
     def count(self) -> int:
-        """Số lượng kết quả hiện tại."""
+        """Current number of results."""
         return len(self.results)
 
     @property
     def is_empty(self) -> bool:
-        """Kiểm tra buffer có rỗng không."""
+        """Check if buffer is empty."""
         return len(self.results) == 0

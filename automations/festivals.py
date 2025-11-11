@@ -1,23 +1,23 @@
 """
 Festival Automation
 
-Flow chuẩn:
+Standard flow:
 1. touch(Template("tpl_festival.png"))
 2. touch(Template("tpl_event.png"))
-3. snapshot -> lưu folder (rank_E_stage_1/01_before_touch.png)
-4. find_and_touch (OCR -> tìm text -> touch)
-5. snapshot -> lưu folder (rank_E_stage_1/02_after_touch.png)
-6. ROI scan -> so sánh CSV -> ghi OK/NG
+3. snapshot -> save to folder (rank_E_stage_1/01_before_touch.png)
+4. find_and_touch (OCR -> find text -> touch)
+5. snapshot -> save to folder (rank_E_stage_1/02_after_touch.png)
+6. ROI scan -> compare CSV -> record OK/NG
 7. touch(Template("tpl_challenge.png"))
 8. touch(Template("tpl_ok.png"))
 9. touch(Template("tpl_allskip.png"))
 10. touch(Template("tpl_ok.png"))
 11. touch(Template("tpl_result.png"))
-12. snapshot -> lưu folder (rank_E_stage_1/03_result.png)
-13. ROI scan -> so sánh CSV -> ghi OK/NG
-14. touch(Template("tpl_ok.png")) if exist
-15. touch(Template("tpl_ok.png")) if exist
-16. Lặp lại
+12. snapshot -> save to folder (rank_E_stage_1/03_result.png)
+13. ROI scan -> compare CSV -> record OK/NG
+14. touch(Template("tpl_ok.png")) if exists
+15. touch(Template("tpl_ok.png")) if exists
+16. Repeat
 """
 
 import os
@@ -26,7 +26,7 @@ import cv2
 import re
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
-from airtest.core.api import Template
+from airtest.core.api import Template, exists, sleep
 from core.agent import Agent
 from core.utils import get_logger, ensure_directory
 from core.data import ResultWriter, load_json, load_csv
@@ -40,12 +40,12 @@ logger = get_logger(__name__)
 
 
 class FestivalAutomation:
-    """Tự động hóa Festival - chỉ giữ các bước cần thiết."""
+    """Festival automation - keep only essential steps."""
 
     def __init__(self, agent: Agent, config: Optional[Dict[str, Any]] = None):
         self.agent = agent
         
-        # Merge config: base config từ FESTIVAL_CONFIG + custom config
+        # Merge config: base config from FESTIVAL_CONFIG + custom config
         base_config = get_festival_config()
         cfg = merge_config(base_config, config) if config else base_config
 
@@ -61,7 +61,7 @@ class FestivalAutomation:
         ensure_directory(self.snapshot_dir)
         ensure_directory(self.results_dir)
 
-        # Initialize detector (YOLO hoặc Template Matching)
+        # Initialize detector (YOLO or Template Matching)
         self.detector = None
         self.use_detector = cfg.get('use_detector')
         
@@ -69,7 +69,7 @@ class FestivalAutomation:
             detector_type = cfg.get('detector_type', 'template')  # 'yolo', 'template', 'auto'
             
             if detector_type == 'auto':
-                # Tự động chọn: ưu tiên YOLO, fallback Template
+                # Auto-select: prefer YOLO, fallback to Template
                 if YOLO_AVAILABLE:
                     try:
                         yolo_config = cfg.get('yolo_config', {})
@@ -79,9 +79,9 @@ class FestivalAutomation:
                             confidence=yolo_config.get('confidence', 0.25),
                             device=yolo_config.get('device', 'cpu')
                         )
-                        logger.info("✅ Using YOLO Detector")
+                        logger.info("Using YOLO Detector")
                     except Exception as e:
-                        logger.warning(f"⚠️ YOLO init failed: {e}, fallback to Template")
+                        logger.warning(f"YOLO init failed: {e}, fallback to Template")
                         template_config = cfg.get('template_config', {})
                         self.detector = TemplateMatcher(
                             templates_dir=template_config.get('templates_dir', self.templates_path),
@@ -93,7 +93,7 @@ class FestivalAutomation:
                         templates_dir=template_config.get('templates_dir', self.templates_path),
                         threshold=template_config.get('threshold', 0.85)
                     )
-                    logger.info("✅ Using Template Matcher")
+                    logger.info("Using Template Matcher")
             
             elif detector_type == 'yolo':
                 yolo_config = cfg.get('yolo_config', {})
@@ -103,7 +103,7 @@ class FestivalAutomation:
                     confidence=yolo_config.get('confidence', 0.25),
                     device=yolo_config.get('device', 'cpu')
                 )
-                logger.info("✅ Using YOLO Detector")
+                logger.info("Using YOLO Detector")
             
             elif detector_type == 'template':
                 template_config = cfg.get('template_config', {})
@@ -111,12 +111,12 @@ class FestivalAutomation:
                     templates_dir=template_config.get('templates_dir', self.templates_path),
                     threshold=template_config.get('threshold', 0.85)
                 )
-                logger.info("✅ Using Template Matcher")
+                logger.info("Using Template Matcher")
 
         logger.info("FestivalAutomation initialized")
 
     def touch_template(self, template_name: str, optional: bool = False) -> bool:
-        """Touch vào template image."""
+        """Touch template image."""
         try:
             template_path = os.path.join(self.templates_path, template_name)
             if not os.path.exists(template_path):
@@ -127,12 +127,12 @@ class FestivalAutomation:
                 return False
 
             template = Template(template_path)
-            pos = self.agent.device.exists(template)
+            pos = exists(template)
 
             if pos:
-                self.agent.device.touch(pos)
+                self.agent.safe_touch(pos)
                 logger.info(f"✓ {template_name}")
-                time.sleep(self.wait_after_touch)
+                sleep(self.wait_after_touch)
                 return True
 
             return optional if optional else False
@@ -142,7 +142,7 @@ class FestivalAutomation:
             return optional
 
     def snapshot_and_save(self, folder_name: str, filename: str) -> Optional[Any]:
-        """Chụp màn hình và lưu vào folder."""
+        """Take screenshot and save to folder."""
         try:
             screenshot = self.agent.snapshot()
             if screenshot is None:
@@ -160,7 +160,7 @@ class FestivalAutomation:
             return None
 
     def snapshot_and_ocr(self) -> List[Dict[str, Any]]:
-        """Chụp màn hình và OCR để lấy text + tọa độ."""
+        """Take screenshot and OCR to get text + coordinates."""
         try:
             screenshot = self.agent.snapshot()
             if screenshot is None:
@@ -190,7 +190,7 @@ class FestivalAutomation:
             return []
 
     def find_text(self, ocr_results: List[Dict[str, Any]], search_text: str) -> Optional[Dict[str, Any]]:
-        """Tìm text trong kết quả OCR."""
+        """Find text in OCR results."""
         search_lower = search_text.lower().strip()
         for result in ocr_results:
             if search_lower in result['text'].lower():
@@ -198,7 +198,7 @@ class FestivalAutomation:
         return None
 
     def find_and_touch(self, search_text: str) -> bool:
-        """Tìm text bằng OCR và touch."""
+        """Find text with OCR and touch."""
         logger.info(f"Find & touch: {search_text}")
         ocr_results = self.snapshot_and_ocr()
         text_info = self.find_text(ocr_results, search_text)
@@ -207,7 +207,7 @@ class FestivalAutomation:
             logger.info(f"✓ Found: {search_text}")
             success = self.agent.safe_touch(text_info['center'])
             if success:
-                time.sleep(self.wait_after_touch)
+                sleep(self.wait_after_touch)
             return success
 
         logger.warning(f"✗ Not found: {search_text}")
@@ -215,36 +215,36 @@ class FestivalAutomation:
 
     def ocr_roi(self, roi_name: str, screenshot: Optional[Any] = None) -> str:
         """
-        OCR một vùng ROI cụ thể.
+        OCR specific ROI region.
 
         Args:
-            roi_name: Tên ROI trong FESTIVALS_ROI_CONFIG
-            screenshot: Screenshot để OCR, None = chụp mới
+            roi_name: ROI name in FESTIVALS_ROI_CONFIG
+            screenshot: Screenshot for OCR, None = take new
 
         Returns:
-            str: Text được OCR từ vùng ROI (đã clean)
+            str: OCR text from ROI region (cleaned)
         """
         try:
-            # Lấy config ROI
+            # Get ROI config
             roi_config = get_festivals_roi_config(roi_name)
             coords = roi_config['coords']  # [x1, x2, y1, y2]
 
-            # Convert sang format (x1, y1, x2, y2) cho snapshot_region
+            # Convert to (x1, y1, x2, y2) format for snapshot_region
             x1, x2, y1, y2 = coords
             region = (x1, y1, x2, y2)
 
-            # Chụp hoặc crop vùng ROI
+            # Take screenshot or crop ROI region
             if screenshot is None:
                 roi_image = self.agent.snapshot_region(region)
             else:
-                # Crop từ screenshot có sẵn
+                # Crop from existing screenshot
                 roi_image = screenshot[y1:y2, x1:x2]
 
             if roi_image is None:
                 logger.warning(f"✗ ROI '{roi_name}': Cannot get image")
                 return ""
 
-            # OCR vùng ROI
+            # OCR ROI region
             if self.agent.ocr_engine is None:
                 logger.error("OCR engine not initialized")
                 return ""
@@ -264,13 +264,13 @@ class FestivalAutomation:
 
     def _clean_ocr_text(self, text: str) -> str:
         """
-        Clean OCR text (loại bỏ ký tự lạ, normalize).
+        Clean OCR text (remove special chars, normalize).
 
         Args:
-            text: Text cần clean
+            text: Text to clean
 
         Returns:
-            str: Text đã clean
+            str: Cleaned text
         """
         if not text:
             return ""
@@ -285,23 +285,23 @@ class FestivalAutomation:
 
     def detect_and_ocr_roi(self, roi_name: str, screenshot: Optional[Any] = None) -> Dict[str, Any]:
         """
-        Detect object trong ROI và OCR để lấy text/quantity.
-        Kết hợp detector (YOLO/Template) với OCR để verify chính xác hơn.
+        Detect objects in ROI and OCR to get text/quantity.
+        Combine detector (YOLO/Template) with OCR for better accuracy.
 
         Args:
-            roi_name: Tên ROI trong FESTIVALS_ROI_CONFIG
-            screenshot: Screenshot để scan, None = chụp mới
+            roi_name: ROI name in FESTIVALS_ROI_CONFIG
+            screenshot: Screenshot to scan, None = take new
 
         Returns:
-            Dict[str, Any]: 
+            Dict[str, Any]:
             {
                 'roi_name': str,
-                'text': str,  # Text từ OCR
-                'detected': bool,  # Có detect được object không
-                'detections': List[Dict],  # Danh sách objects detected
-                'detection_count': int,  # Số lượng objects detected
-                'has_quantity': bool,  # Có quantity không (từ detector)
-                'quantity': int,  # Quantity nếu có (từ detector)
+                'text': str,  # Text from OCR
+                'detected': bool,  # Object detected
+                'detections': List[Dict],  # Detected objects list
+                'detection_count': int,  # Number of detected objects
+                'has_quantity': bool,  # Has quantity (from detector)
+                'quantity': int,  # Quantity if available (from detector)
             }
         """
         result = {
@@ -315,32 +315,32 @@ class FestivalAutomation:
         }
 
         try:
-            # Lấy config ROI
+            # Get ROI config
             roi_config = get_festivals_roi_config(roi_name)
             coords = roi_config['coords']  # [x1, x2, y1, y2]
             x1, x2, y1, y2 = coords
 
-            # Lấy screenshot nếu chưa có
+            # Get screenshot if not provided
             if screenshot is None:
                 screenshot = self.agent.snapshot()
                 if screenshot is None:
                     logger.warning(f"✗ Cannot get screenshot for ROI '{roi_name}'")
                     return result
 
-            # Crop vùng ROI
+            # Crop ROI region
             roi_image = screenshot[y1:y2, x1:x2]
             if roi_image is None or roi_image.size == 0:
                 logger.warning(f"✗ ROI '{roi_name}': Invalid crop")
                 return result
 
-            # Bước 1: OCR truyền thống (luôn chạy)
+            # Step 1: Traditional OCR (always runs)
             if self.agent.ocr_engine is not None:
                 ocr_result = self.agent.ocr_engine.recognize_cv2(roi_image)
                 text = self._clean_ocr_text(ocr_result.get('text', ''))
                 result['text'] = text
                 logger.debug(f"ROI '{roi_name}' OCR: '{text}'")
 
-            # Bước 2: Detection (nếu có detector)
+            # Step 2: Detection (if detector available)
             if self.detector is not None:
                 detections = self.detector.detect(roi_image)
                 result['detections'] = detections
@@ -356,7 +356,7 @@ class FestivalAutomation:
                         confidence = det.get('confidence', 0)
                         logger.debug(f"  - {item_name} x{quantity} (conf: {confidence:.2f})")
                         
-                        # Lưu quantity từ detection đầu tiên
+                        # Save quantity from first detection
                         if quantity > 0 and not result['has_quantity']:
                             result['has_quantity'] = True
                             result['quantity'] = quantity
@@ -374,28 +374,28 @@ class FestivalAutomation:
     def scan_screen_roi(self, screenshot: Optional[Any] = None,
                        roi_names: Optional[List[str]] = None) -> Dict[str, Any]:
         """
-        Scan màn hình theo các vùng ROI đã định nghĩa.
+        Scan screen according to defined ROI regions.
 
         Args:
-            screenshot: Screenshot để scan, None = chụp mới
-            roi_names: Danh sách tên ROI cần scan, None = scan tất cả
+            screenshot: Screenshot to scan, None = take new
+            roi_names: List of ROI names to scan, None = scan all
 
         Returns:
-            Dict[str, Any]: Dictionary với key là tên ROI, value là text OCR được
+            Dict[str, Any]: Dictionary with ROI name as key, OCR text as value
         """
         try:
-            # Lấy screenshot nếu chưa có
+            # Get screenshot if not provided
             if screenshot is None:
                 screenshot = self.agent.snapshot()
                 if screenshot is None:
                     logger.error("Cannot get screenshot")
                     return {}
 
-            # Xác định danh sách ROI cần scan
+            # Determine ROI list to scan
             if roi_names is None:
                 roi_names = list(FESTIVALS_ROI_CONFIG.keys())
 
-            # OCR từng ROI
+            # OCR each ROI
             results = {}
             for roi_name in roi_names:
                 try:
@@ -417,16 +417,16 @@ class FestivalAutomation:
                                      roi_names: Optional[List[str]] = None,
                                      use_detector: bool = True) -> Dict[str, Dict[str, Any]]:
         """
-        Scan màn hình với detector (YOLO/Template) + OCR.
-        Version nâng cao của scan_screen_roi với detection info.
+        Scan screen with detector (YOLO/Template) + OCR.
+        Enhanced version of scan_screen_roi with detection info.
 
         Args:
-            screenshot: Screenshot để scan, None = chụp mới
-            roi_names: Danh sách tên ROI cần scan, None = scan tất cả
-            use_detector: Có sử dụng detector không (True = detect + OCR, False = chỉ OCR)
+            screenshot: Screenshot to scan, None = take new
+            roi_names: List of ROI names to scan, None = scan all
+            use_detector: Use detector (True = detect + OCR, False = OCR only)
 
         Returns:
-            Dict[str, Dict[str, Any]]: Dictionary với key là tên ROI, value là detection result
+            Dict[str, Dict[str, Any]]: Dictionary with ROI name as key, detection result as value
             {
                 'roi_name': {
                     'text': str,
@@ -439,27 +439,27 @@ class FestivalAutomation:
             }
         """
         try:
-            # Lấy screenshot nếu chưa có
+            # Get screenshot if not provided
             if screenshot is None:
                 screenshot = self.agent.snapshot()
                 if screenshot is None:
                     logger.error("Cannot get screenshot")
                     return {}
 
-            # Xác định danh sách ROI cần scan
+            # Determine ROI list to scan
             if roi_names is None:
                 roi_names = list(FESTIVALS_ROI_CONFIG.keys())
 
-            # Scan từng ROI với detector
+            # Scan each ROI with detector
             results = {}
             for roi_name in roi_names:
                 try:
                     if use_detector and self.detector is not None:
-                        # Sử dụng detector + OCR
+                        # Use detector + OCR
                         result = self.detect_and_ocr_roi(roi_name, screenshot)
                         results[roi_name] = result
                     else:
-                        # Fallback: chỉ OCR
+                        # Fallback: OCR only
                         text = self.ocr_roi(roi_name, screenshot)
                         results[roi_name] = {
                             'roi_name': roi_name,
@@ -493,29 +493,29 @@ class FestivalAutomation:
                        expected_data: Dict[str, Any],
                        return_details: bool = True) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
         """
-        So sánh dữ liệu OCR/Detector với expected data từ CSV.
-        Hỗ trợ cả simple OCR format (Dict[str, str]) và detector format (Dict[str, Dict]).
+        Compare OCR/Detector data with expected CSV data.
+        Supports both simple OCR format (Dict[str, str]) and detector format (Dict[str, Dict]).
 
         Args:
-            extracted_data: Dữ liệu từ OCR hoặc Detector
-                - Simple format: Dict[str, str] từ scan_screen_roi()
-                - Detector format: Dict[str, Dict] từ scan_screen_roi_with_detector()
-            expected_data: Dữ liệu mong đợi từ CSV
-            return_details: Có trả về detailed results không (default: True)
+            extracted_data: Data from OCR or Detector
+                - Simple format: Dict[str, str] from scan_screen_roi()
+                - Detector format: Dict[str, Dict] from scan_screen_roi_with_detector()
+            expected_data: Expected data from CSV
+            return_details: Return detailed results (default: True)
 
         Returns:
             Tuple[bool, str, Optional[Dict]]: (is_match, message, detailed_results)
-                - is_match: True nếu match, False nếu không
-                - message: Thông điệp tóm tắt
-                - detailed_results: Chi tiết từng field (None nếu return_details=False)
+                - is_match: True if match, False if not
+                - message: Summary message
+                - detailed_results: Field details (None if return_details=False)
         """
         if not expected_data:
             return True, "No expected data", None if not return_details else {}
 
-        # Lọc ra các field có trong FESTIVALS_ROI_CONFIG (bỏ qua meta fields)
+        # Filter fields in FESTIVALS_ROI_CONFIG (ignore meta fields)
         roi_fields = set(FESTIVALS_ROI_CONFIG.keys())
         comparable_fields = {k: v for k, v in expected_data.items()
-                           if k in roi_fields and v}  # Chỉ compare field có value
+                           if k in roi_fields and v}  # Only compare fields with values
 
         if not comparable_fields:
             return True, "No comparable fields", None if not return_details else {}
@@ -550,7 +550,7 @@ class FestivalAutomation:
 
             expected_value_str = str(expected_value).strip()
 
-            # Normalize để so sánh (case-insensitive, remove spaces)
+            # Normalize for comparison (case-insensitive, remove spaces)
             extracted_normalized = extracted_text.lower().replace(' ', '')
             expected_normalized = expected_value_str.lower().replace(' ', '')
 
@@ -559,7 +559,7 @@ class FestivalAutomation:
             if extracted_normalized == expected_normalized:
                 text_match = True
             elif extracted_normalized in expected_normalized or expected_normalized in extracted_normalized:
-                # Partial match cũng tính là OK
+                # Partial match also counts as OK
                 text_match = True
                 logger.debug(f"Partial match: {field} - '{extracted_text}' ~ '{expected_value_str}'")
 
@@ -597,15 +597,15 @@ class FestivalAutomation:
     def run_festival_stage(self, stage_data: Dict[str, Any], stage_idx: int,
                           use_detector: bool = False) -> bool:
         """
-        Chạy automation cho 1 stage theo flow 1-16.
+        Run automation for 1 stage following flow 1-16.
 
         Args:
-            stage_data: Dữ liệu stage từ CSV/JSON
-            stage_idx: Index của stage
-            use_detector: Có sử dụng detector (YOLO/Template) không
+            stage_data: Stage data from CSV/JSON
+            stage_idx: Stage index
+            use_detector: Use detector (YOLO/Template)
 
         Returns:
-            bool: True nếu pass, False nếu fail
+            bool: True if pass, False if fail
         """
         logger.info(f"\n{'='*60}\nSTAGE {stage_idx}: {stage_data.get('フェス名', 'Unknown')}\n{'='*60}")
 
@@ -614,60 +614,109 @@ class FestivalAutomation:
         search_text = stage_data.get('フェスランク', '')
 
         try:
-            # Steps 1-2: Touch Festival và Event
-            logger.info("Steps 1-2: Festival & Event")
-            if not self.touch_template("tpl_festival.png") or not self.touch_template("tpl_event.png"):
+            # Step 1: Touch Festival
+            logger.info("Step 1: Touch Festival")
+            if not self.touch_template("tpl_festival.png"):
+                logger.error("Step 1: Failed to touch festival button")
                 return False
 
-            # Step 3: Snapshot before
-            logger.info("Step 3: Snapshot before")
-            if not self.snapshot_and_save(folder_name, "01_before.png"):
+            # Wait for festival menu to load
+            sleep(1.0)
+
+            # Step 2: Touch Event
+            logger.info("Step 2: Touch Event")
+            if not self.touch_template("tpl_event.png"):
+                logger.error("Step 2: Failed to touch event button")
                 return False
 
-            # Step 4: Find and touch
-            logger.info("Step 4: Find & touch")
-            if not search_text or not self.find_and_touch(search_text):
+            # Wait for event screen to load
+            sleep(1.5)
+
+            # Step 3: Snapshot before touch
+            logger.info("Step 3: Snapshot before touch")
+            screenshot_before = self.snapshot_and_save(folder_name, "01_before_touch.png")
+            if screenshot_before is None:
+                logger.error("Step 3: Failed to take before touch snapshot")
                 return False
 
-            # Step 5: Snapshot after
-            logger.info("Step 5: Snapshot after")
-            screenshot_after = self.snapshot_and_save(folder_name, "02_after.png")
+            # Step 4: Find and touch (OCR search)
+            logger.info("Step 4: Find & touch (OCR)")
+            if not search_text:
+                logger.error("Step 4: No search text provided")
+                return False
+
+            if not self.find_and_touch(search_text):
+                logger.error(f"Step 4: Failed to find and touch '{search_text}'")
+                return False
+
+            # Wait for screen transition after touch
+            sleep(2.0)
+
+            # Step 5: Snapshot after touch
+            logger.info("Step 5: Snapshot after touch")
+            screenshot_after = self.snapshot_and_save(folder_name, "02_after_touch.png")
             if screenshot_after is None:
+                logger.error("Step 5: Failed to take after touch snapshot")
                 return False
 
-            # Step 6: ROI scan & compare (Pre-battle)
+            # Step 6: ROI scan & compare (Pre-battle verification)
             logger.info("Step 6: ROI scan & compare (Pre-battle)")
             pre_battle_rois = FESTIVAL_CONFIG.get('pre_battle_rois', [
                 'フェス名', 'フェスランク', '勝利点数', '推奨ランク',
                 'Sランクボーダー', '初回クリア報酬', 'Sランク報酬'
             ])
-            
+
             if use_detector and self.detector is not None:
-                # Sử dụng detector + OCR
+                # Use detector + OCR
                 extracted_before = self.scan_screen_roi_with_detector(screenshot_after, pre_battle_rois)
                 is_ok_before, msg_before, details_before = self.compare_results(extracted_before, stage_data)
-                logger.info(f"Pre-battle check (with detector): {msg_before}")
+                logger.info(f"Pre-battle verification (with detector): {msg_before}")
             else:
-                # Chỉ OCR truyền thống
+                # Traditional OCR only
                 extracted_before = self.scan_screen_roi(screenshot_after, pre_battle_rois)
                 is_ok_before, msg_before, _ = self.compare_results(extracted_before, stage_data, return_details=False)
-                logger.info(f"Pre-battle check: {msg_before}")
+                logger.info(f"Pre-battle verification: {msg_before}")
 
-            # Steps 7-10: Battle flow
-            logger.info("Steps 7-10: Battle flow")
-            self.touch_template("tpl_challenge.png")
+            # Pre-battle verification must pass
+            if not is_ok_before:
+                logger.error(f"Step 6: Pre-battle verification failed: {msg_before}")
+                return False
+
+            # Step 7: Touch Challenge
+            logger.info("Step 7: Touch Challenge")
+            if not self.touch_template("tpl_challenge.png"):
+                logger.warning("Step 7: Failed to touch challenge button")
+                return False
+
+            # Step 8: Touch OK (confirmation dialog)
+            logger.info("Step 8: Touch OK (confirmation)")
             self.touch_template("tpl_ok.png", optional=True)
-            self.touch_template("tpl_allskip.png", optional=True)
+
+            # Step 9: Touch All Skip
+            logger.info("Step 9: Touch All Skip")
+            if not self.touch_template("tpl_allskip.png"):
+                logger.warning("Step 9: Failed to touch all skip button")
+                return False
+
+            # Step 10: Touch OK (after skip)
+            logger.info("Step 10: Touch OK (after skip)")
             self.touch_template("tpl_ok.png", optional=True)
-            time.sleep(2.0)
+
+            # Wait for battle to complete
+            logger.info("Waiting for battle completion...")
+            sleep(3.0)
 
             # Step 11: Touch Result
             logger.info("Step 11: Touch Result")
-            self.touch_template("tpl_result.png", optional=True)
+            if not self.touch_template("tpl_result.png"):
+                logger.warning("Step 11: Failed to touch result button")
+                return False
 
             # Step 12: Snapshot result
             logger.info("Step 12: Snapshot result")
             screenshot_result = self.snapshot_and_save(folder_name, "03_result.png")
+            if screenshot_result is None:
+                return False
 
             # Step 13: ROI scan & compare (Post-battle)
             logger.info("Step 13: ROI scan & compare (Post-battle)")
@@ -675,21 +724,24 @@ class FestivalAutomation:
                 '獲得ザックマネー', '獲得アイテム',
                 '獲得EXP-Ace', '獲得EXP-NonAce', 'エース', '非エース'
             ])
-            
+
             if use_detector and self.detector is not None:
-                # Sử dụng detector + OCR
+                # Use detector + OCR
                 extracted_after = self.scan_screen_roi_with_detector(screenshot_result, post_battle_rois)
                 is_ok_after, msg_after, details_after = self.compare_results(extracted_after, stage_data)
                 logger.info(f"Post-battle check (with detector): {msg_after}")
             else:
-                # Chỉ OCR truyền thống
+                # Traditional OCR only
                 extracted_after = self.scan_screen_roi(screenshot_result, post_battle_rois)
                 is_ok_after, msg_after, _ = self.compare_results(extracted_after, stage_data, return_details=False)
                 logger.info(f"Post-battle check: {msg_after}")
 
-            # Steps 14-15: Close
-            logger.info("Steps 14-15: Close")
+            # Step 14: Touch OK to close result (first OK)
+            logger.info("Step 14: Touch OK (close result - first)")
             self.touch_template("tpl_ok.png", optional=True)
+
+            # Step 15: Touch OK to close result (second OK if needed)
+            logger.info("Step 15: Touch OK (close result - second)")
             self.touch_template("tpl_ok.png", optional=True)
 
             # Final result
@@ -704,15 +756,15 @@ class FestivalAutomation:
     def run_all_stages(self, data_path: str, output_path: Optional[str] = None,
                       use_detector: bool = False) -> bool:
         """
-        Chạy automation cho tất cả stages.
+        Run automation for all stages.
 
         Args:
-            data_path: Đường dẫn đến file CSV/JSON chứa test data
-            output_path: Đường dẫn output result (None = auto-generate)
-            use_detector: Có sử dụng detector (YOLO/Template) không
+            data_path: Path to CSV/JSON file with test data
+            output_path: Output result path (None = auto-generate)
+            use_detector: Use detector (YOLO/Template)
 
         Returns:
-            bool: True nếu thành công
+            bool: True if successful
         """
         try:
             # Load data
@@ -741,7 +793,7 @@ class FestivalAutomation:
                 result_writer.add_result(test_case,
                                        ResultWriter.RESULT_OK if is_ok else ResultWriter.RESULT_NG,
                                        error_message=None if is_ok else "Verification failed")
-                time.sleep(1.0)
+                sleep(1.0)
 
             # Save results
             result_writer.write()
@@ -754,14 +806,14 @@ class FestivalAutomation:
 
     def run(self, data_path: str, use_detector: bool = False) -> bool:
         """
-        Entry point chính.
+        Main entry point.
 
         Args:
-            data_path: Đường dẫn đến file CSV/JSON chứa test data
-            use_detector: Có sử dụng detector (YOLO/Template) không
+            data_path: Path to CSV/JSON file with test data
+            use_detector: Use detector (YOLO/Template)
 
         Returns:
-            bool: True nếu thành công
+            bool: True if successful
         """
         logger.info("="*70 + "\nFESTIVAL AUTOMATION START\n" + "="*70)
 

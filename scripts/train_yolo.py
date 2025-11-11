@@ -1,6 +1,6 @@
 """
-Script tiện ích để train YOLO model từ các template images và annotations.
-Hỗ trợ tạo dataset, augmentation, và training YOLO model.
+Utility script to train YOLO model from template images and annotations.
+Supports dataset creation, augmentation, and YOLO model training.
 """
 
 import os
@@ -20,41 +20,41 @@ from ultralytics import YOLO
 
 
 class YOLOTrainer:
-    """Class để prepare data và train YOLO model cho item detection."""
-    
+    """Class to prepare data and train YOLO model for item detection."""
+
     def __init__(self, templates_dir: str, output_dir: str = "yolo_dataset"):
         """
-        Khởi tạo YOLOTrainer.
-        
+        Initialize YOLOTrainer.
+
         Args:
-            templates_dir (str): Thư mục chứa template images
-            output_dir (str): Thư mục output cho dataset YOLO
+            templates_dir (str): Directory containing template images
+            output_dir (str): Output directory for YOLO dataset
         """
         self.templates_dir = Path(templates_dir)
         self.output_dir = Path(output_dir)
         self.classes = []
         
         if not self.templates_dir.exists():
-            raise FileNotFoundError(f"Templates directory không tồn tại: {templates_dir}")
-    
+            raise FileNotFoundError(f"Templates directory does not exist: {templates_dir}")
+
     def create_dataset_structure(self) -> None:
-        """Tạo cấu trúc thư mục cho YOLO dataset."""
-        logger.info("Tạo cấu trúc thư mục YOLO dataset...")
-        
-        # Tạo thư mục chính
+        """Create directory structure for YOLO dataset."""
+        logger.info("Creating YOLO dataset directory structure...")
+
+        # Create main directories
         for split in ['train', 'val', 'test']:
             for subdir in ['images', 'labels']:
                 path = self.output_dir / split / subdir
                 path.mkdir(parents=True, exist_ok=True)
-        
-        logger.info(f"Đã tạo cấu trúc dataset tại {self.output_dir}")
+
+        logger.info(f"Created dataset structure at {self.output_dir}")
     
     def load_class_names(self) -> List[str]:
         """
-        Load danh sách class names từ templates directory.
-        
+        Load class names list from templates directory.
+
         Returns:
-            List[str]: Danh sách tên classes
+            List[str]: List of class names
         """
         classes = []
         for file in sorted(self.templates_dir.glob("*")):
@@ -64,25 +64,25 @@ class YOLOTrainer:
                     classes.append(class_name)
         
         self.classes = classes
-        logger.info(f"Tìm thấy {len(classes)} classes: {classes}")
+        logger.info(f"Found {len(classes)} classes: {classes}")
         return classes
     
-    def create_synthetic_data(self, 
+    def create_synthetic_data(self,
                              background_images: List[str],
                              num_samples: int = 100,
                              max_items_per_image: int = 5) -> None:
         """
-        Tạo synthetic training data bằng cách paste template lên background.
-        
+        Create synthetic training data by pasting templates onto backgrounds.
+
         Args:
-            background_images (List[str]): Danh sách đường dẫn ảnh background
-            num_samples (int): Số lượng ảnh synthetic cần tạo
-            max_items_per_image (int): Số lượng items tối đa trên mỗi ảnh
+            background_images (List[str]): List of background image paths
+            num_samples (int): Number of synthetic images to create
+            max_items_per_image (int): Maximum number of items per image
         """
         if not self.classes:
             self.load_class_names()
         
-        logger.info(f"Tạo {num_samples} synthetic images...")
+        logger.info(f"Creating {num_samples} synthetic images...")
         
         # Load templates
         templates = {}

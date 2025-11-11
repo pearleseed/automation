@@ -1,16 +1,16 @@
 """
 Gacha Automation
 
-Flow cho Gacha:
+Gacha flow:
 1. touch(Template("tpl_gacha.png"))
-2. touch(Template("tpl_single_pull.png")) hoặc touch(Template("tpl_multi_pull.png"))
-3. snapshot -> lưu folder (gacha_01_before_pull.png)
+2. touch(Template("tpl_single_pull.png")) or touch(Template("tpl_multi_pull.png"))
+3. snapshot -> save to folder (gacha_01_before_pull.png)
 4. touch(Template("tpl_confirm.png"))
-5. touch(Template("tpl_skip.png")) (nếu có animation)
-6. snapshot -> lưu folder (gacha_02_after_pull.png)
-7. ROI scan -> kiểm tra kết quả gacha
-8. touch(Template("tpl_ok.png")) để đóng
-9. Lặp lại theo số lượng pulls
+5. touch(Template("tpl_skip.png")) (if animation exists)
+6. snapshot -> save to folder (gacha_02_after_pull.png)
+7. ROI scan -> check gacha results
+8. touch(Template("tpl_ok.png")) to close
+9. Repeat according to pull count
 """
 
 import os
@@ -18,7 +18,7 @@ import time
 import cv2
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
-from airtest.core.api import Template
+from airtest.core.api import Template, exists, sleep
 from core.agent import Agent
 from core.utils import get_logger, ensure_directory
 from core.data import ResultWriter, load_json, load_csv
@@ -31,12 +31,12 @@ logger = get_logger(__name__)
 
 
 class GachaAutomation:
-    """Tự động hóa Gacha pulls."""
+    """Automate Gacha pulls."""
 
     def __init__(self, agent: Agent, config: Optional[Dict[str, Any]] = None):
         self.agent = agent
         
-        # Merge config: base config từ GACHA_CONFIG + custom config
+        # Merge config: base config from GACHA_CONFIG + custom config
         base_config = get_gacha_config()
         cfg = merge_config(base_config, config) if config else base_config
 
@@ -60,7 +60,7 @@ class GachaAutomation:
         logger.info("GachaAutomation initialized")
 
     def touch_template(self, template_name: str, optional: bool = False) -> bool:
-        """Touch vào template image."""
+        """Touch template image."""
         try:
             template_path = os.path.join(self.templates_path, template_name)
             if not os.path.exists(template_path):
@@ -71,12 +71,12 @@ class GachaAutomation:
                 return False
 
             template = Template(template_path)
-            pos = self.agent.device.exists(template)
+            pos = exists(template)
 
             if pos:
-                self.agent.device.touch(pos)
+                self.agent.safe_touch(pos)
                 logger.info(f"✓ {template_name}")
-                time.sleep(self.wait_after_touch)
+                sleep(self.wait_after_touch)
                 return True
 
             return optional if optional else False
@@ -86,7 +86,7 @@ class GachaAutomation:
             return optional
 
     def snapshot_and_save(self, folder_name: str, filename: str) -> Optional[Any]:
-        """Chụp màn hình và lưu vào folder."""
+        """Take screenshot and save to folder."""
         try:
             screenshot = self.agent.snapshot()
             if screenshot is None:
@@ -105,36 +105,36 @@ class GachaAutomation:
 
     def ocr_roi(self, roi_name: str, screenshot: Optional[Any] = None) -> str:
         """
-        OCR một vùng ROI cụ thể cho Gacha.
+        OCR specific ROI region for Gacha.
 
         Args:
-            roi_name: Tên ROI trong GACHA_ROI_CONFIG
-            screenshot: Screenshot để OCR, None = chụp mới
+            roi_name: ROI name in GACHA_ROI_CONFIG
+            screenshot: Screenshot for OCR, None = take new
 
         Returns:
-            str: Text được OCR từ vùng ROI (đã clean)
+            str: OCR text from ROI region (cleaned)
         """
         try:
-            # Lấy config ROI
+            # Get ROI config
             roi_config = get_gacha_roi_config(roi_name)
             coords = roi_config['coords']  # [x1, x2, y1, y2]
 
-            # Convert sang format (x1, y1, x2, y2) cho snapshot_region
+            # Convert to (x1, y1, x2, y2) format for snapshot_region
             x1, x2, y1, y2 = coords
             region = (x1, y1, x2, y2)
 
-            # Chụp hoặc crop vùng ROI
+            # Take screenshot or crop ROI region
             if screenshot is None:
                 roi_image = self.agent.snapshot_region(region)
             else:
-                # Crop từ screenshot có sẵn
+                # Crop from existing screenshot
                 roi_image = screenshot[y1:y2, x1:x2]
 
             if roi_image is None:
                 logger.warning(f"✗ ROI '{roi_name}': Cannot get image")
                 return ""
 
-            # OCR vùng ROI
+            # OCR ROI region
             if self.agent.ocr_engine is None:
                 logger.error("OCR engine not initialized")
                 return ""
@@ -154,13 +154,13 @@ class GachaAutomation:
 
     def _clean_ocr_text(self, text: str) -> str:
         """
-        Clean OCR text (loại bỏ ký tự lạ, normalize).
+        Clean OCR text (remove special chars, normalize).
 
         Args:
-            text: Text cần clean
+            text: Text to clean
 
         Returns:
-            str: Text đã clean
+            str: Cleaned text
         """
         if not text:
             return ""
@@ -176,28 +176,28 @@ class GachaAutomation:
     def scan_screen_roi(self, screenshot: Optional[Any] = None,
                          roi_names: Optional[List[str]] = None) -> Dict[str, Any]:
         """
-        Scan màn hình theo các vùng ROI đã định nghĩa (thống nhất với festivals).
+        Scan screen according to defined ROI regions (consistent with festivals).
 
         Args:
-            screenshot: Screenshot để scan, None = chụp mới
-            roi_names: Danh sách tên ROI cần scan, None = scan tất cả
+            screenshot: Screenshot to scan, None = take new
+            roi_names: List of ROI names to scan, None = scan all
 
         Returns:
-            Dict[str, Any]: Dictionary với key là tên ROI, value là text OCR được
+            Dict[str, Any]: Dictionary with ROI name as key, OCR text as value
         """
         try:
-            # Lấy screenshot nếu chưa có
+            # Get screenshot if not provided
             if screenshot is None:
                 screenshot = self.agent.snapshot()
                 if screenshot is None:
                     logger.error("Cannot get screenshot")
                     return {}
 
-            # Xác định danh sách ROI cần scan
+            # Determine ROI list to scan
             if roi_names is None:
                 roi_names = list(GACHA_ROI_CONFIG.keys())
 
-            # OCR từng ROI
+            # OCR each ROI
             results = {}
             for roi_name in roi_names:
                 try:
@@ -217,7 +217,7 @@ class GachaAutomation:
 
     def run_gacha_stage(self, pull_data: Dict[str, Any], pull_idx: int,
                       pull_type: str = "single") -> Dict[str, Any]:
-        """Chạy một gacha stage (thống nhất với festivals: run_xxx_stage)."""
+        """Run gacha stage (consistent with festivals: run_xxx_stage)."""
         logger.info(f"\n{'='*50}\nPULL {pull_idx}: {pull_type.upper()}\n{'='*50}")
 
         folder_name = f"gacha_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -255,7 +255,7 @@ class GachaAutomation:
             # Step 5: Skip animation if exists
             logger.info("Step 5: Skip animation")
             self.touch_template("tpl_skip.png", optional=True)
-            time.sleep(2.0)  # Wait for result
+            sleep(2.0)  # Wait for result
 
             # Step 6: Snapshot result
             logger.info("Step 6: Snapshot result")
@@ -294,16 +294,16 @@ class GachaAutomation:
     def run_all_pulls(self, data_path: Optional[str] = None, num_pulls: Optional[int] = None,
                       pull_type: str = "single", output_path: Optional[str] = None) -> bool:
         """
-        Chạy tất cả pulls (thống nhất với festivals: run_all_xxx).
-        
+        Run all pulls (consistent with festivals: run_all_xxx).
+
         Args:
-            data_path: Đường dẫn đến file CSV/JSON chứa test data (mode 1)
-            num_pulls: Số lượng pulls để chạy (mode 2, nếu không có data_path)
-            pull_type: Loại pull ('single' hoặc 'multi', chỉ dùng cho mode 2)
-            output_path: Đường dẫn output result (None = auto-generate)
-            
+            data_path: Path to CSV/JSON file with test data (mode 1)
+            num_pulls: Number of pulls to run (mode 2, if no data_path)
+            pull_type: Pull type ('single' or 'multi', mode 2 only)
+            output_path: Output result path (None = auto-generate)
+
         Returns:
-            bool: True nếu thành công
+            bool: True if successful
         """
         try:
             # Mode 1: Load from data file
@@ -348,7 +348,7 @@ class GachaAutomation:
                             successful_pulls += 1
                             rarity = pull_result.get('rarity', 'Unknown')
                             rarity_counts[rarity] = rarity_counts.get(rarity, 0) + 1
-                        time.sleep(1.0)
+                        sleep(1.0)
                     
                     session_end = datetime.now()
                     session_duration = (session_end - session_start).total_seconds()
@@ -375,7 +375,7 @@ class GachaAutomation:
                     
                     logger.info(f"Session {idx} completed: {successful_pulls}/{session_num_pulls} successful")
                     logger.info(f"Rarity distribution: {rarity_counts}")
-                    time.sleep(2.0)
+                    sleep(2.0)
                 
                 # Save results
                 result_writer.write()
@@ -410,7 +410,7 @@ class GachaAutomation:
                                            ResultWriter.RESULT_OK if pull_result['success'] else ResultWriter.RESULT_NG,
                                            error_message=None if pull_result['success'] else "Pull failed")
 
-                    time.sleep(1.0)
+                    sleep(1.0)
 
                 # Save results
                 result_writer.write()
@@ -440,23 +440,23 @@ class GachaAutomation:
 
     def run(self, config: Optional[Dict[str, Any]] = None, data_path: Optional[str] = None) -> bool:
         """
-        Entry point chính cho Gacha automation (thống nhất với festivals).
-        
+        Main entry point for Gacha automation (consistent with festivals).
+
         Supports 2 modes:
-        1. Config mode: Truyền config dict với num_pulls, pull_type
-        2. Data mode: Truyền data_path đến CSV/JSON file
-        
+        1. Config mode: Pass config dict with num_pulls, pull_type
+        2. Data mode: Pass data_path to CSV/JSON file
+
         Args:
             config: Configuration dict (mode 1)
             data_path: Path to CSV/JSON data file (mode 2)
-            
+
         Returns:
-            bool: True nếu thành công
-            
+            bool: True if successful
+
         Example usage:
             # Mode 1: Direct config
             gacha.run(config={'num_pulls': 10, 'pull_type': 'single'})
-            
+
             # Mode 2: Load from file
             gacha.run(data_path='./data/gacha_tests.csv')
         """

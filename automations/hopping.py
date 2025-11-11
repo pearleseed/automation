@@ -1,16 +1,16 @@
 """
 Hopping Automation
 
-Flow cho Hopping (World Hopping):
+Hopping flow (World Hopping):
 1. touch(Template("tpl_world_map.png"))
 2. touch(Template("tpl_hop_button.png"))
-3. snapshot -> lưu folder (hop_01_before_hop.png)
+3. snapshot -> save to folder (hop_01_before_hop.png)
 4. touch(Template("tpl_confirm_hop.png"))
 5. Wait for loading
-6. snapshot -> lưu folder (hop_02_after_hop.png)
-7. ROI scan -> kiểm tra world mới
-8. Verify hop thành công
-9. Lặp lại theo số lượng hops
+6. snapshot -> save to folder (hop_02_after_hop.png)
+7. ROI scan -> check new world
+8. Verify hop success
+9. Repeat according to hop count
 """
 
 import os
@@ -18,7 +18,7 @@ import time
 import cv2
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
-from airtest.core.api import Template
+from airtest.core.api import Template, exists, sleep
 from core.agent import Agent
 from core.utils import get_logger, ensure_directory
 from core.data import ResultWriter, load_json, load_csv
@@ -31,12 +31,12 @@ logger = get_logger(__name__)
 
 
 class HoppingAutomation:
-    """Tự động hóa World Hopping."""
+    """Automate World Hopping."""
 
     def __init__(self, agent: Agent, config: Optional[Dict[str, Any]] = None):
         self.agent = agent
         
-        # Merge config: base config từ HOPPING_CONFIG + custom config
+        # Merge config: base config from HOPPING_CONFIG + custom config
         base_config = get_hopping_config()
         cfg = merge_config(base_config, config) if config else base_config
 
@@ -62,7 +62,7 @@ class HoppingAutomation:
         logger.info("HoppingAutomation initialized")
 
     def touch_template(self, template_name: str, optional: bool = False) -> bool:
-        """Touch vào template image."""
+        """Touch template image."""
         try:
             template_path = os.path.join(self.templates_path, template_name)
             if not os.path.exists(template_path):
@@ -73,12 +73,12 @@ class HoppingAutomation:
                 return False
 
             template = Template(template_path)
-            pos = self.agent.device.exists(template)
+            pos = exists(template)
 
             if pos:
-                self.agent.device.touch(pos)
+                self.agent.safe_touch(pos)
                 logger.info(f"✓ {template_name}")
-                time.sleep(self.wait_after_touch)
+                sleep(self.wait_after_touch)
                 return True
 
             return optional if optional else False
@@ -88,7 +88,7 @@ class HoppingAutomation:
             return optional
 
     def snapshot_and_save(self, folder_name: str, filename: str) -> Optional[Any]:
-        """Chụp màn hình và lưu vào folder."""
+        """Take screenshot and save to folder."""
         try:
             screenshot = self.agent.snapshot()
             if screenshot is None:
@@ -107,17 +107,17 @@ class HoppingAutomation:
 
     def ocr_roi(self, roi_name: str, screenshot: Optional[Any] = None) -> str:
         """
-        OCR một vùng ROI cụ thể cho Hopping.
+        OCR specific ROI region for Hopping.
 
         Args:
-            roi_name: Tên ROI trong HOPPING_ROI_CONFIG
-            screenshot: Screenshot để OCR, None = chụp mới
+            roi_name: ROI name in HOPPING_ROI_CONFIG
+            screenshot: Screenshot for OCR, None = take new
 
         Returns:
-            str: Text được OCR từ vùng ROI (đã clean)
+            str: OCR text from ROI region (cleaned)
         """
         try:
-            # Lấy config ROI
+            # Get ROI config
             roi_config = get_hopping_roi_config(roi_name)
             coords = roi_config['coords']  # [x1, x2, y1, y2]
 
@@ -125,18 +125,18 @@ class HoppingAutomation:
             x1, x2, y1, y2 = coords
             region = (x1, y1, x2, y2)
 
-            # Chụp hoặc crop vùng ROI
+            # Take screenshot or crop ROI region
             if screenshot is None:
                 roi_image = self.agent.snapshot_region(region)
             else:
-                # Crop từ screenshot có sẵn
+                # Crop from existing screenshot
                 roi_image = screenshot[y1:y2, x1:x2]
 
             if roi_image is None:
                 logger.warning(f"✗ ROI '{roi_name}': Cannot get image")
                 return ""
 
-            # OCR vùng ROI
+            # OCR ROI region
             if self.agent.ocr_engine is None:
                 logger.error("OCR engine not initialized")
                 return ""
@@ -156,13 +156,13 @@ class HoppingAutomation:
 
     def _clean_ocr_text(self, text: str) -> str:
         """
-        Clean OCR text (loại bỏ ký tự lạ, normalize).
+        Clean OCR text (remove special chars, normalize).
 
         Args:
-            text: Text cần clean
+            text: Text to clean
 
         Returns:
-            str: Text đã clean
+            str: Cleaned text
         """
         if not text:
             return ""
@@ -178,28 +178,28 @@ class HoppingAutomation:
     def scan_screen_roi(self, screenshot: Optional[Any] = None,
                        roi_names: Optional[List[str]] = None) -> Dict[str, Any]:
         """
-        Scan màn hình theo các vùng ROI đã định nghĩa (thống nhất với festivals).
+        Scan screen according to defined ROI regions (consistent with festivals).
 
         Args:
-            screenshot: Screenshot để scan, None = chụp mới
-            roi_names: Danh sách tên ROI cần scan, None = scan tất cả
+            screenshot: Screenshot to scan, None = take new
+            roi_names: List of ROI names to scan, None = scan all
 
         Returns:
-            Dict[str, Any]: Dictionary với key là tên ROI, value là text OCR được
+            Dict[str, Any]: Dictionary with ROI name as key, OCR text as value
         """
         try:
-            # Lấy screenshot nếu chưa có
+            # Get screenshot if not provided
             if screenshot is None:
                 screenshot = self.agent.snapshot()
                 if screenshot is None:
                     logger.error("Cannot get screenshot")
                     return {}
 
-            # Xác định danh sách ROI cần scan
+            # Determine ROI list to scan
             if roi_names is None:
                 roi_names = list(HOPPING_ROI_CONFIG.keys())
 
-            # OCR từng ROI
+            # OCR each ROI
             results = {}
             for roi_name in roi_names:
                 try:
@@ -218,15 +218,15 @@ class HoppingAutomation:
             return {}
 
     def verify_hop_success(self, before_world: str, after_world: str) -> bool:
-        """Kiểm tra hop có thành công không (world có thay đổi)."""
+        """Check if hop was successful (world changed)."""
         if not before_world or not after_world:
             return False
 
-        # Nếu world name khác nhau thì hop thành công
+        # Hop successful if world names differ
         return before_world.strip().lower() != after_world.strip().lower()
 
     def run_hopping_stage(self, hop_data: Dict[str, Any], hop_idx: int) -> Dict[str, Any]:
-        """Chạy một hopping stage (thống nhất với festivals: run_xxx_stage)."""
+        """Run hopping stage (consistent with festivals: run_xxx_stage)."""
         logger.info(f"\n{'='*50}\nHOP {hop_idx}\n{'='*50}")
 
         folder_name = f"hopping_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -262,7 +262,7 @@ class HoppingAutomation:
 
             # Step 5: Wait for loading
             logger.info(f"Step 5: Wait for loading ({self.loading_wait}s)")
-            time.sleep(self.loading_wait)
+            sleep(self.loading_wait)
 
             # Step 6: Check new world (after hop)
             logger.info("Step 6: Check new world")
@@ -293,15 +293,15 @@ class HoppingAutomation:
     def run_all_hops(self, data_path: Optional[str] = None, num_hops: Optional[int] = None,
                      output_path: Optional[str] = None) -> bool:
         """
-        Chạy tất cả hops (thống nhất với festivals: run_all_xxx).
-        
+        Run all hops (consistent with festivals: run_all_xxx).
+
         Args:
-            data_path: Đường dẫn đến file CSV/JSON chứa test data (mode 1)
-            num_hops: Số lượng hops để chạy (mode 2, nếu không có data_path)
-            output_path: Đường dẫn output result (None = auto-generate)
-            
+            data_path: Path to CSV/JSON file with test data (mode 1)
+            num_hops: Number of hops to run (mode 2, if no data_path)
+            output_path: Output result path (None = auto-generate)
+
         Returns:
-            bool: True nếu thành công
+            bool: True if successful
         """
         try:
             # Mode 1: Load from data file
@@ -342,7 +342,7 @@ class HoppingAutomation:
                         hop_result = self.run_hopping_stage({}, hop_idx)
                         if hop_result['success']:
                             successful_hops += 1
-                        time.sleep(2.0)
+                        sleep(2.0)
                     
                     session_end = datetime.now()
                     session_duration = (session_end - session_start).total_seconds()
@@ -366,7 +366,7 @@ class HoppingAutomation:
                     )
                     
                     logger.info(f"Session {idx} completed: {successful_hops}/{session_num_hops} successful")
-                    time.sleep(3.0)
+                    sleep(3.0)
                 
                 # Save results
                 result_writer.write()
@@ -403,7 +403,7 @@ class HoppingAutomation:
                                            ResultWriter.RESULT_OK if hop_result['success'] else ResultWriter.RESULT_NG,
                                            error_message=None if hop_result['success'] else "Hop verification failed")
 
-                    time.sleep(2.0)
+                    sleep(2.0)
 
                 # Save results
                 result_writer.write()
@@ -428,18 +428,18 @@ class HoppingAutomation:
 
     def run(self, config: Optional[Dict[str, Any]] = None, data_path: Optional[str] = None) -> bool:
         """
-        Entry point chính cho Hopping automation (thống nhất với festivals).
-        
+        Main entry point for Hopping automation (consistent with festivals).
+
         Supports 2 modes:
-        1. Config mode: Truyền config dict với num_hops
-        2. Data mode: Truyền data_path đến CSV/JSON file
-        
+        1. Config mode: Pass config dict with num_hops
+        2. Data mode: Pass data_path to CSV/JSON file
+
         Args:
             config: Configuration dict (mode 1)
             data_path: Path to CSV/JSON data file (mode 2)
-            
+
         Returns:
-            bool: True nếu thành công
+            bool: True if successful
             
         Example usage:
             # Mode 1: Direct config

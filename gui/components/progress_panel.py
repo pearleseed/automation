@@ -9,7 +9,7 @@ from typing import Optional
 
 
 class ProgressPanel(ttk.Frame):
-    """Panel hiển thị tiến trình và thống kê."""
+    """Panel displaying progress and statistics."""
 
     def __init__(self, parent):
         super().__init__(parent, relief='solid', borderwidth=1)
@@ -42,12 +42,12 @@ class ProgressPanel(ttk.Frame):
         self.total_label.grid(row=0, column=1, sticky='w', padx=5)
 
         # Success
-        ttk.Label(stats_frame, text="✅ OK:", font=('', 9)).grid(row=0, column=2, sticky='w', padx=(20, 0))
+        ttk.Label(stats_frame, text=" OK:", font=('', 9)).grid(row=0, column=2, sticky='w', padx=(20, 0))
         self.ok_label = ttk.Label(stats_frame, text="0", font=('', 9, 'bold'), foreground='green')
         self.ok_label.grid(row=0, column=3, sticky='w', padx=5)
 
         # Failed
-        ttk.Label(stats_frame, text="❌ NG:", font=('', 9)).grid(row=0, column=4, sticky='w', padx=(20, 0))
+        ttk.Label(stats_frame, text=" NG:", font=('', 9)).grid(row=0, column=4, sticky='w', padx=(20, 0))
         self.ng_label = ttk.Label(stats_frame, text="0", font=('', 9, 'bold'), foreground='red')
         self.ng_label.grid(row=0, column=5, sticky='w', padx=5)
 

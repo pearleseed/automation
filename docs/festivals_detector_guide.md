@@ -286,10 +286,10 @@ if use_detector and self.detector is not None:
 ## Kết luận
 
 Detector + OCR mang lại:
-- ✅ **Độ chính xác cao hơn** nhờ double verification
-- ✅ **Quantity extraction** tự động từ detector
-- ✅ **Flexible** với 3 chế độ: YOLO, Template, Auto
-- ✅ **Backward compatible** với OCR-only mode
+-  **Độ chính xác cao hơn** nhờ double verification
+-  **Quantity extraction** tự động từ detector
+-  **Flexible** với 3 chế độ: YOLO, Template, Auto
+-  **Backward compatible** với OCR-only mode
 
 Khuyến nghị: Sử dụng **Auto mode** để có trải nghiệm tốt nhất!
 

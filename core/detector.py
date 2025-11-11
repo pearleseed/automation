@@ -1,6 +1,6 @@
 """
-Item Detector Module - YOLO Detection và Template Matching
-Lưu trữ để sử dụng sau này khi cần tự động detect items.
+Item Detector Module - YOLO Detection and Template Matching
+Stored for future use when automatic item detection is needed.
 """
 
 import cv2
@@ -18,12 +18,12 @@ try:
     from ultralytics import YOLO
     import torch
     YOLO_AVAILABLE = True
-    logger.info("✅ YOLO available")
+    logger.info("YOLO available")
 except ImportError:
     YOLO_AVAILABLE = False
     YOLO = None
     torch = None
-    logger.warning("⚠️ YOLO not available. Install: pip install ultralytics torch")
+    logger.warning("YOLO not available. Install: pip install ultralytics torch")
 
 
 # ==================== YOLO DETECTOR ====================
@@ -31,19 +31,19 @@ except ImportError:
 class YOLODetector:
     """
     YOLO-based item detector.
-    Phát hiện items trong game bằng YOLO model.
+    Detects items in game using YOLO model.
     """
 
-    def __init__(self, agent: Agent, model_path: str = "yolo11n.pt", 
+    def __init__(self, agent: Agent, model_path: str = "yolo11n.pt",
                  confidence: float = 0.25, device: str = "cpu"):
         """
-        Khởi tạo YOLO Detector.
+        Initialize YOLO Detector.
 
         Args:
-            agent (Agent): Agent instance để sử dụng OCR
-            model_path (str): Đường dẫn đến YOLO model
-            confidence (float): Ngưỡng độ tin cậy (0.0-1.0)
-            device (str): Device chạy model ('cpu', 'cuda', 'mps', 'auto')
+            agent (Agent): Agent instance for OCR usage
+            model_path (str): Path to YOLO model
+            confidence (float): Confidence threshold (0.0-1.0)
+            device (str): Model running device ('cpu', 'cuda', 'mps', 'auto')
         """
         self.agent = agent
         self.model_path = model_path
@@ -52,15 +52,15 @@ class YOLODetector:
         self.model = None
 
         if not YOLO_AVAILABLE:
-            logger.error("❌ YOLO not available")
+            logger.error(" YOLO not available")
             raise RuntimeError("YOLO not available. Install: pip install ultralytics torch")
 
         self._init_model()
 
     def _init_model(self) -> None:
-        """Khởi tạo YOLO model."""
+        """Initialize YOLO model."""
         try:
-            logger.info(f"🔄 Loading YOLO model from {self.model_path}...")
+            logger.info(f" Loading YOLO model from {self.model_path}...")
             self.model = YOLO(self.model_path)
 
             # Auto-detect device
@@ -72,34 +72,34 @@ class YOLODetector:
                 else:
                     self.device = 'cpu'
 
-            logger.info(f"✅ YOLO model loaded on device: {self.device}")
+            logger.info(f" YOLO model loaded on device: {self.device}")
 
         except Exception as e:
-            logger.error(f"❌ YOLO initialization failed: {e}")
+            logger.error(f" YOLO initialization failed: {e}")
             raise
 
     def detect(self, image: np.ndarray, conf: Optional[float] = None,
                iou: float = 0.45, imgsz: int = 640) -> List[Dict[str, Any]]:
         """
-        Phát hiện items trong ảnh.
+        Detect items in image.
 
         Args:
-            image (np.ndarray): Ảnh BGR
-            conf (Optional[float]): Ngưỡng confidence (None = dùng default)
-            iou (float): IoU threshold cho NMS
-            imgsz (int): Kích thước input image
+            image (np.ndarray): BGR image
+            conf (Optional[float]): Confidence threshold (None = use default)
+            iou (float): IoU threshold for NMS
+            imgsz (int): Input image size
 
         Returns:
-            List[Dict[str, Any]]: Danh sách items phát hiện được
-                - item (str): Tên item
-                - quantity (int): Số lượng (từ OCR)
+            List[Dict[str, Any]]: List of detected items
+                - item (str): Item name
+                - quantity (int): Quantity (from OCR)
                 - x, y, x2, y2 (int): Bounding box
-                - center_x, center_y (int): Tọa độ trung tâm
-                - confidence (float): Độ tin cậy
-                - ocr_text (str): Text OCR gốc
+                - center_x, center_y (int): Center coordinates
+                - confidence (float): Confidence score
+                - ocr_text (str): Raw OCR text
         """
         if self.model is None:
-            logger.error("❌ YOLO model not initialized")
+            logger.error(" YOLO model not initialized")
             return []
 
         if conf is None:
@@ -152,7 +152,7 @@ class YOLODetector:
             return found_items
 
         except Exception as e:
-            logger.error(f"❌ YOLO detection error: {e}")
+            logger.error(f" YOLO detection error: {e}")
             return []
 
     def _extract_quantity(self, image: np.ndarray,
@@ -160,15 +160,15 @@ class YOLODetector:
                          offset_x: int = 30, offset_y: int = 0,
                          roi_width: int = 80, roi_height: int = 30) -> Tuple[int, str]:
         """
-        Trích xuất số lượng từ vùng gần bbox bằng OCR.
+        Extract quantity from area near bbox using OCR.
 
         Args:
-            image (np.ndarray): Ảnh BGR
+            image (np.ndarray): BGR image
             bbox (Tuple[int, int, int, int]): Bounding box (x1, y1, x2, y2)
-            offset_x (int): Offset X từ góc phải bbox
-            offset_y (int): Offset Y từ góc dưới bbox
-            roi_width (int): Chiều rộng vùng OCR
-            roi_height (int): Chiều cao vùng OCR
+            offset_x (int): Offset X from right corner of bbox
+            offset_y (int): Offset Y from bottom corner of bbox
+            roi_width (int): OCR region width
+            roi_height (int): OCR region height
 
         Returns:
             Tuple[int, str]: (quantity, ocr_text)
@@ -203,7 +203,7 @@ class YOLODetector:
             return quantity, ocr_text
 
         except Exception as e:
-            logger.debug(f"⚠️ Quantity OCR error: {e}")
+            logger.debug(f" Quantity OCR error: {e}")
             return 0, ''
 
     @staticmethod
@@ -242,30 +242,30 @@ class YOLODetector:
 class TemplateMatcher:
     """
     Template-based item detector.
-    Phát hiện items bằng template matching (fallback khi không có YOLO).
+    Detects items using template matching (fallback when YOLO unavailable).
     """
 
     def __init__(self, templates_dir: str = "templates",
                  threshold: float = 0.85, method: str = "TM_CCOEFF_NORMED"):
         """
-        Khởi tạo Template Matcher.
+        Initialize Template Matcher.
 
         Args:
-            templates_dir (str): Thư mục chứa template images
-            threshold (float): Ngưỡng độ tin cậy (0.0-1.0)
-            method (str): Phương pháp matching của OpenCV
+            templates_dir (str): Directory containing template images
+            threshold (float): Confidence threshold (0.0-1.0)
+            method (str): OpenCV matching method
         """
         self.templates_dir = templates_dir
         self.threshold = threshold
         self.method = method
         self.templates = self._load_templates()
 
-        logger.info(f"✅ TemplateMatcher initialized with {len(self.templates)} templates")
+        logger.info(f" TemplateMatcher initialized with {len(self.templates)} templates")
 
     def _load_templates(self) -> Dict[str, np.ndarray]:
-        """Load tất cả template images."""
+        """Load all template images."""
         if not os.path.isdir(self.templates_dir):
-            logger.warning(f"⚠️ Templates directory not found: {self.templates_dir}")
+            logger.warning(f" Templates directory not found: {self.templates_dir}")
             return {}
 
         templates = {}
@@ -283,21 +283,21 @@ class TemplateMatcher:
                         templates[name] = img
                         logger.debug(f"✓ Loaded template: {name}")
                 except Exception as e:
-                    logger.error(f"❌ Error loading template {filename}: {e}")
+                    logger.error(f" Error loading template {filename}: {e}")
 
         return templates
 
     def detect(self, image: np.ndarray,
                threshold: Optional[float] = None) -> List[Dict[str, Any]]:
         """
-        Phát hiện items trong ảnh bằng template matching.
+        Detect items in image using template matching.
 
         Args:
-            image (np.ndarray): Ảnh BGR
-            threshold (Optional[float]): Ngưỡng độ tin cậy (None = dùng default)
+            image (np.ndarray): BGR image
+            threshold (Optional[float]): Confidence threshold (None = use default)
 
         Returns:
-            List[Dict[str, Any]]: Danh sách items phát hiện được
+            List[Dict[str, Any]]: List of detected items
         """
         if threshold is None:
             threshold = self.threshold
@@ -306,7 +306,7 @@ class TemplateMatcher:
         try:
             image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         except Exception as e:
-            logger.error(f"❌ Grayscale conversion error: {e}")
+            logger.error(f" Grayscale conversion error: {e}")
             return []
 
         found_items = []
@@ -333,12 +333,12 @@ class TemplateMatcher:
         # Remove duplicates
         unique_items = self._remove_duplicates(found_items, min_distance=10)
 
-        logger.info(f"✅ Template matching found {len(unique_items)} items")
+        logger.info(f" Template matching found {len(unique_items)} items")
         return unique_items
 
     def _find_matches(self, image_gray: np.ndarray, template: np.ndarray,
                      threshold: float) -> List[Tuple[int, int]]:
-        """Tìm vị trí khớp với template."""
+        """Find positions that match template."""
         try:
             method = getattr(cv2, self.method)
             res = cv2.matchTemplate(image_gray, template, method)
@@ -353,7 +353,7 @@ class TemplateMatcher:
             return matches
 
         except Exception as e:
-            logger.error(f"❌ Template matching error: {e}")
+            logger.error(f" Template matching error: {e}")
             return []
 
     @staticmethod
@@ -386,7 +386,7 @@ class TemplateMatcher:
 # ==================== USAGE EXAMPLES ====================
 
 """
-# Example 1: Sử dụng YOLO Detector
+# Example 1: Using YOLO Detector
 from core.agent import Agent
 from core.detector import YOLODetector
 
@@ -395,10 +395,10 @@ detector = YOLODetector(
     agent=agent,
     model_path="yolo11n.pt",
     confidence=0.25,
-    device="cpu"  # hoặc "cuda", "mps", "auto"
+    device="cpu"  # or "cuda", "mps", "auto"
 )
 
-# Detect items trong screenshot
+# Detect items in screenshot
 screenshot = agent.snapshot()
 items = detector.detect(screenshot)
 
@@ -408,7 +408,7 @@ for item in items:
           f"with confidence {item['confidence']:.2f}")
 
 
-# Example 2: Sử dụng Template Matcher (fallback)
+# Example 2: Using Template Matcher (fallback)
 from core.detector import TemplateMatcher
 
 matcher = TemplateMatcher(

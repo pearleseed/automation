@@ -1,9 +1,9 @@
 """
-Configuration Module - Quản lý cấu hình toàn hệ thống
+Configuration Module - System-wide configuration management
 
-Centralized configuration cho tất cả automation modules:
+Centralized configuration for all automation modules:
 - Festival Automation
-- Gacha Automation  
+- Gacha Automation
 - Hopping Automation
 - Detector (YOLO, Template Matching)
 """
@@ -15,96 +15,96 @@ logger = get_logger(__name__)
 
 
 # ==================== ROI CONFIGURATION ====================
-# Region of Interest cho các vùng trích xuất dữ liệu
-# Format: [x1, x2, y1, y2] - tọa độ pixel trên màn hình
+# Region of Interest for data extraction areas
+# Format: [x1, x2, y1, y2] - pixel coordinates on screen
 
 FESTIVALS_ROI_CONFIG: Dict[str, Dict[str, Any]] = {
     "フェス名": {
         "coords": [784, 1296, 247, 759],
-        "description": "Vùng festival name/rank"
+        "description": "Festival name/rank area"
     },
     "フェスランク": {
         "coords": [392, 904, 41, 86],
-        "description": "Vùng festival rank level"
+        "description": "Festival rank level area"
     },
     "勝利点数": {
         "coords": [1012, 1240, 41, 86],
-        "description": "Vùng victory points"
+        "description": "Victory points area"
     },
     "推奨ランク": {
         "coords": [1050, 1255, 108, 163],
-        "description": "Vùng recommended rank"
+        "description": "Recommended rank area"
     },
     "Sランクボーダー": {
         "coords": [1050, 1255, 170, 225],
-        "description": "Vùng S rank border points"
+        "description": "S rank border points area"
     },
     "初回クリア報酬": {
         "coords": [1050, 1255, 233, 330],
-        "description": "Vùng first clear reward"
+        "description": "First clear reward area"
     },
     "Sランク報酬": {
         "coords": [1050, 1255, 343, 440],
-        "description": "Vùng S rank reward"
+        "description": "S rank reward area"
     },
     "獲得ザックマネー": {
         "coords": [392, 904, 20, 60],
-        "description": "Vùng zack money earned"
+        "description": "Zack money earned area"
     },
     "獲得アイテム": {
         "coords": [392, 904, 70, 170],
-        "description": "Vùng items earned"
+        "description": "Items earned area"
     },
     "獲得EXP-Ace": {
         "coords": [950, 1040, 115, 155],
-        "description": "Vùng EXP for Ace units"
+        "description": "EXP for Ace units area"
     },
     "獲得EXP-NonAce": {
         "coords": [950, 1040, 215, 255],
-        "description": "Vùng EXP for non-Ace units"
+        "description": "EXP for non-Ace units area"
     },
     "エース": {
         "coords": [1085, 1175, 85, 175],
-        "description": "Vùng Venus memory for Ace"
+        "description": "Venus memory for Ace area"
     },
     "非エース": {
         "coords": [1085, 1175, 185, 275],
-        "description": "Vùng Venus memory for non-Ace"
+        "description": "Venus memory for non-Ace area"
     }
 }
 
 
 # ==================== GACHA ROI CONFIGURATION ====================
-# ROI cho Gacha automation
+# ROI for Gacha automation
 GACHA_ROI_CONFIG: Dict[str, Dict[str, Any]] = {
     "rarity": {
         "coords": [600, 800, 200, 250],
-        "description": "Vùng rarity của character (SSR, SR, R)"
+        "description": "Character rarity area (SSR, SR, R)"
     },
     "character": {
         "coords": [400, 900, 300, 400],
-        "description": "Vùng tên character"
+        "description": "Character name area"
     },
     "pull_count": {
         "coords": [100, 300, 50, 100],
-        "description": "Vùng số pull counter"
+        "description": "Pull counter area"
     },
 }
 
 # ==================== HOPPING ROI CONFIGURATION ====================
-# ROI cho Hopping automation
+# ROI for Hopping automation
 HOPPING_ROI_CONFIG: Dict[str, Dict[str, Any]] = {
     "world_name": {
         "coords": [50, 400, 20, 80],
-        "description": "Vùng tên world hiện tại"
+        "description": "Current world name area"
     },
     "world_level": {
         "coords": [450, 650, 20, 80],
-        "description": "Vùng level của world"
+        "description": "World level area"
     },
     "hop_cooldown": {
         "coords": [800, 1000, 500, 550],
-        "description": "Vùng thời gian cooldown hop"
+        "description": "Hop cooldown time area"
     },
 }
 
@@ -113,16 +113,16 @@ HOPPING_ROI_CONFIG: Dict[str, Dict[str, Any]] = {
 
 def get_festivals_roi_config(festivals_roi_name: str) -> Dict[str, Any]:
     """
-    Lấy cấu hình FESTIVALS ROI theo tên.
+    Get FESTIVALS ROI configuration by name.
 
     Args:
-        festivals_roi_name (str): Tên FESTIVALS ROI
+        festivals_roi_name (str): FESTIVALS ROI name
 
     Returns:
-        Dict[str, Any]: Cấu hình FESTIVALS ROI với keys 'coords' và 'description'
+        Dict[str, Any]: FESTIVALS ROI configuration with 'coords' and 'description' keys
 
     Raises:
-        KeyError: Nếu festivals_roi_name không tồn tại
+        KeyError: If festivals_roi_name does not exist
     """
     if festivals_roi_name not in FESTIVALS_ROI_CONFIG:
         available = list(FESTIVALS_ROI_CONFIG.keys())
@@ -134,16 +134,16 @@ def get_festivals_roi_config(festivals_roi_name: str) -> Dict[str, Any]:
 
 def get_gacha_roi_config(gacha_roi_name: str) -> Dict[str, Any]:
     """
-    Lấy cấu hình Gacha ROI theo tên.
+    Get Gacha ROI configuration by name.
 
     Args:
-        gacha_roi_name (str): Tên Gacha ROI
+        gacha_roi_name (str): Gacha ROI name
 
     Returns:
-        Dict[str, Any]: Cấu hình Gacha ROI với keys 'coords' và 'description'
+        Dict[str, Any]: Gacha ROI configuration with 'coords' and 'description' keys
 
     Raises:
-        KeyError: Nếu gacha_roi_name không tồn tại
+        KeyError: If gacha_roi_name does not exist
     """
     if gacha_roi_name not in GACHA_ROI_CONFIG:
         available = list(GACHA_ROI_CONFIG.keys())
@@ -155,16 +155,16 @@ def get_gacha_roi_config(gacha_roi_name: str) -> Dict[str, Any]:
 
 def get_hopping_roi_config(hopping_roi_name: str) -> Dict[str, Any]:
     """
-    Lấy cấu hình Hopping ROI theo tên.
+    Get Hopping ROI configuration by name.
 
     Args:
-        hopping_roi_name (str): Tên Hopping ROI
+        hopping_roi_name (str): Hopping ROI name
 
     Returns:
-        Dict[str, Any]: Cấu hình Hopping ROI với keys 'coords' và 'description'
+        Dict[str, Any]: Hopping ROI configuration with 'coords' and 'description' keys
 
     Raises:
-        KeyError: Nếu hopping_roi_name không tồn tại
+        KeyError: If hopping_roi_name does not exist
     """
     if hopping_roi_name not in HOPPING_ROI_CONFIG:
         available = list(HOPPING_ROI_CONFIG.keys())
@@ -175,7 +175,7 @@ def get_hopping_roi_config(hopping_roi_name: str) -> Dict[str, Any]:
 
 
 # ==================== DEFAULT PATHS ====================
-# Paths mặc định cho toàn hệ thống
+# Default paths for the entire system
 
 DEFAULT_PATHS: Dict[str, str] = {
     'templates': './templates',
@@ -186,7 +186,7 @@ DEFAULT_PATHS: Dict[str, str] = {
 
 
 # ==================== FESTIVAL CONFIGURATION ====================
-# Cấu hình cho Festival Automation
+# Configuration for Festival Automation
 
 FESTIVAL_CONFIG: Dict[str, Any] = {
     # Paths
@@ -198,7 +198,7 @@ FESTIVAL_CONFIG: Dict[str, Any] = {
     'wait_after_touch': 1.0,
     
     # Detector settings
-    'use_detector': True,  # Có sử dụng detector không
+    'use_detector': True,  # Whether to use detector
     'detector_type': 'template',  # 'yolo', 'template', 'auto'
     
     # YOLO config
@@ -228,7 +228,7 @@ FESTIVAL_CONFIG: Dict[str, Any] = {
 
 
 # ==================== GACHA CONFIGURATION ====================
-# Cấu hình cho Gacha Automation
+# Configuration for Gacha Automation
 
 GACHA_CONFIG: Dict[str, Any] = {
     # Paths
@@ -242,16 +242,16 @@ GACHA_CONFIG: Dict[str, Any] = {
     
     # Pull settings
     'max_pulls': 10,
-    'pull_type': 'single',  # 'single' hoặc 'multi'
+    'pull_type': 'single',  # 'single' or 'multi'
     
     # Detector settings
-    'use_detector': False,  # Gacha thường không cần detector
+    'use_detector': False,  # Gacha usually doesn't need detector
     'detector_type': 'auto',
 }
 
 
 # ==================== HOPPING CONFIGURATION ====================
-# Cấu hình cho Hopping Automation
+# Configuration for Hopping Automation
 
 HOPPING_CONFIG: Dict[str, Any] = {
     # Paths
@@ -261,8 +261,8 @@ HOPPING_CONFIG: Dict[str, Any] = {
     
     # Timing
     'wait_after_touch': 1.0,
-    'loading_wait': 5.0,  # Thời gian chờ loading khi hop
-    'cooldown_wait': 3.0,  # Thời gian chờ cooldown
+    'loading_wait': 5.0,  # Loading wait time when hopping
+    'cooldown_wait': 3.0,  # Cooldown wait time
     
     # Hop settings
     'max_hops': 10,
@@ -276,32 +276,32 @@ HOPPING_CONFIG: Dict[str, Any] = {
 
 
 # ==================== DETECTOR CONFIGURATION ====================
-# Cấu hình chung cho Detector (YOLO, Template Matching)
+# Common configuration for Detector (YOLO, Template Matching)
 
 DETECTOR_CONFIG: Dict[str, Any] = {
     # YOLO settings
     'yolo': {
-        'model_path': 'yolo11n.pt',  # Có thể dùng: yolo11n.pt, yolo11s.pt, yolo11m.pt, yolo11l.pt, yolo11x.pt
-        'confidence': 0.25,  # Ngưỡng confidence (0.0-1.0)
-        'iou': 0.45,  # IoU threshold cho NMS
-        'imgsz': 640,  # Kích thước input image
+        'model_path': 'yolo11n.pt',  # Available: yolo11n.pt, yolo11s.pt, yolo11m.pt, yolo11l.pt, yolo11x.pt
+        'confidence': 0.25,  # Confidence threshold (0.0-1.0)
+        'iou': 0.45,  # IoU threshold for NMS
+        'imgsz': 640,  # Input image size
         'device': 'cpu',  # 'cpu', 'cuda', 'mps', 'auto'
     },
     
     # Template Matching settings
     'template': {
         'templates_dir': './templates',
-        'threshold': 0.85,  # Ngưỡng matching (0.0-1.0)
-        'method': 'TM_CCOEFF_NORMED',  # Phương pháp matching
-        'min_distance': 10,  # Khoảng cách tối thiểu để loại bỏ duplicate
+        'threshold': 0.85,  # Matching threshold (0.0-1.0)
+        'method': 'TM_CCOEFF_NORMED',  # Matching method
+        'min_distance': 10,  # Minimum distance to remove duplicates
     },
     
-    # Quantity extraction settings (cho YOLO)
+    # Quantity extraction settings (for YOLO)
     'quantity_extraction': {
-        'offset_x': 30,  # Offset X từ góc phải bbox
-        'offset_y': 0,  # Offset Y từ góc dưới bbox
-        'roi_width': 80,  # Chiều rộng vùng OCR
-        'roi_height': 30,  # Chiều cao vùng OCR
+        'offset_x': 30,  # Offset X from right corner of bbox
+        'offset_y': 0,  # Offset Y from bottom corner of bbox
+        'roi_width': 80,  # OCR region width
+        'roi_height': 30,  # OCR region height
     },
 }
 
@@ -310,8 +310,8 @@ DETECTOR_CONFIG: Dict[str, Any] = {
 
 def get_festival_config() -> Dict[str, Any]:
     """
-    Lấy cấu hình Festival Automation.
-    
+    Get Festival Automation configuration.
+
     Returns:
         Dict[str, Any]: Festival configuration
     """
@@ -320,8 +320,8 @@ def get_festival_config() -> Dict[str, Any]:
 
 def get_gacha_config() -> Dict[str, Any]:
     """
-    Lấy cấu hình Gacha Automation.
-    
+    Get Gacha Automation configuration.
+
     Returns:
         Dict[str, Any]: Gacha configuration
     """
@@ -330,8 +330,8 @@ def get_gacha_config() -> Dict[str, Any]:
 
 def get_hopping_config() -> Dict[str, Any]:
     """
-    Lấy cấu hình Hopping Automation.
-    
+    Get Hopping Automation configuration.
+
     Returns:
         Dict[str, Any]: Hopping configuration
     """
@@ -340,11 +340,11 @@ def get_hopping_config() -> Dict[str, Any]:
 
 def get_detector_config(detector_type: str = 'yolo') -> Dict[str, Any]:
     """
-    Lấy cấu hình Detector.
-    
+    Get Detector configuration.
+
     Args:
-        detector_type (str): Loại detector ('yolo' hoặc 'template')
-        
+        detector_type (str): Detector type ('yolo' or 'template')
+
     Returns:
         Dict[str, Any]: Detector configuration
     """
@@ -361,12 +361,12 @@ def get_detector_config(detector_type: str = 'yolo') -> Dict[str, Any]:
 
 def merge_config(base_config: Dict[str, Any], custom_config: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Merge custom config vào base config (deep merge).
-    
+    Merge custom config into base config (deep merge).
+
     Args:
         base_config: Base configuration
         custom_config: Custom configuration to override
-        
+
     Returns:
         Dict[str, Any]: Merged configuration
     """
@@ -383,4 +383,4 @@ def merge_config(base_config: Dict[str, Any], custom_config: Dict[str, Any]) -> 
     return result
 
 
-logger.info("✅ Configuration module loaded successfully")
+logger.info("Configuration module loaded successfully")

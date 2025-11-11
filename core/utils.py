@@ -12,23 +12,23 @@ logger = logging.getLogger(__name__)
 
 def ensure_directory(path: str) -> None:
     """
-    Đảm bảo thư mục tồn tại, tạo nếu chưa có.
-    
+    Ensure directory exists, create if not present.
+
     Args:
-        path (str): Đường dẫn thư mục
+        path (str): Directory path
     """
     if not os.path.exists(path):
         os.makedirs(path)
-        logger.info(f"Đã tạo thư mục: {path}")
+        logger.info(f"Created directory: {path}")
 
 
 def get_logger(name: str) -> logging.Logger:
     """
-    Lấy logger instance theo tên module.
-    
+    Get logger instance by module name.
+
     Args:
-        name (str): Tên module (thường dùng __name__)
-    
+        name (str): Module name (usually __name__)
+
     Returns:
         logging.Logger: Logger instance
     """
