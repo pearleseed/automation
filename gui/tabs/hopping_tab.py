@@ -31,7 +31,7 @@ class HoppingTab(BaseAutomationTab):
     def _create_config_ui(self, parent):
         """Create Hopping-specific configuration UI."""
         # Hop Configuration
-        config_section = ttk.LabelFrame(parent, text="Hopping Settings", padding=10)
+        config_section = ttk.LabelFrame(parent, text=" Hopping Settings", padding=10)
         config_section.pack(fill='x', pady=5)
 
         config_inner = ttk.Frame(config_section)
@@ -42,7 +42,7 @@ class HoppingTab(BaseAutomationTab):
         ttk.Entry(config_inner, textvariable=self.num_hops_var, width=10, font=('', 10)).grid(row=0, column=1, sticky='w', padx=5, pady=2)
 
         ttk.Label(config_inner, text="Default pick Hopping Routlete (1-6)",
-                 font=('', 9), foreground='#6b7280').grid(row=1, column=0, columnspan=2, sticky='w', pady=(5, 0))
+                 font=('', 9), foreground='gray').grid(row=1, column=0, columnspan=2, sticky='w', pady=(5, 0))
 
         # Loading wait time
         ttk.Label(config_inner, text="Loading Wait:", font=('', 10)).grid(row=2, column=0, sticky='w', pady=2)

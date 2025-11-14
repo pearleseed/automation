@@ -14,7 +14,7 @@ class QuickActionsPanel(ttk.Frame):
         super().__init__(parent, relief='solid', borderwidth=1)
         self.callbacks = callbacks
 
-        ttk.Label(self, text="Quick Actions",
+        ttk.Label(self, text=" Quick Actions",
                  font=('', 11, 'bold')).pack(pady=5)
 
         # Buttons grid
@@ -61,7 +61,7 @@ class QuickActionsPanel(ttk.Frame):
 
         ttk.Button(
             btn_frame,
-            text="Clear Cache",
+            text=" Clear Cache",
             command=lambda: self._call('clear_cache'),
             width=18
         ).grid(row=2, column=1, sticky='ew', padx=3, pady=3, ipady=8)

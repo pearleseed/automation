@@ -31,7 +31,7 @@ class GachaTab(BaseAutomationTab):
     def _create_config_ui(self, parent):
         """Create Gacha-specific configuration UI."""
         # Pull Configuration
-        config_section = ttk.LabelFrame(parent, text="Gacha Settings", padding=10)
+        config_section = ttk.LabelFrame(parent, text=" Gacha Settings", padding=10)
         config_section.pack(fill='x', pady=5)
 
         config_inner = ttk.Frame(config_section)
@@ -48,7 +48,7 @@ class GachaTab(BaseAutomationTab):
         pull_type_combo.grid(row=1, column=1, sticky='w', padx=5, pady=2)
 
         ttk.Label(config_inner, text="Single pull = 1 ticket, Multi pull = 10 tickets",
-                 font=('', 9), foreground='#6b7280').grid(row=2, column=0, columnspan=2, sticky='w', pady=(5, 0))
+                 font=('', 9), foreground='gray').grid(row=2, column=0, columnspan=2, sticky='w', pady=(5, 0))
 
     def _get_automation_config(self) -> Dict[str, Any]:
         """Get Gacha-specific automation config."""

@@ -105,13 +105,13 @@ class BaseAutomationTab(ttk.Frame):
         ttk.Button(file_inner, text="Preview", command=self.preview_data, width=12).grid(row=0, column=3, padx=2, pady=2, ipady=5)
 
         ttk.Label(file_inner, text="", font=('', 8)).grid(row=1, column=0, columnspan=4, sticky='w', pady=(2, 0))
-        ttk.Label(file_inner, text=f"Select {self.tab_name.lower()}.json or CSV file containing {self.tab_name.lower()} data", font=('', 9), foreground='#6b7280').grid(row=2, column=0, columnspan=4, sticky='w')
+        ttk.Label(file_inner, text=f"Select {self.tab_name.lower()}.json or CSV file containing {self.tab_name.lower()} data", font=('', 9), foreground='gray').grid(row=2, column=0, columnspan=4, sticky='w')
 
         file_inner.columnconfigure(1, weight=1)
 
     def _setup_common_settings(self, parent):
         """Setup common automation settings."""
-        config_section = ttk.LabelFrame(parent, text="Automation Settings", padding=10)
+        config_section = ttk.LabelFrame(parent, text=" Automation Settings", padding=10)
         config_section.pack(fill='x', pady=5)
 
         config_inner = ttk.Frame(config_section)
@@ -148,7 +148,7 @@ class BaseAutomationTab(ttk.Frame):
 
         self.start_button = ttk.Button(
             action_frame,
-            text=f"Start {self.tab_name}",
+            text=f" Start {self.tab_name}",
             command=self.start_automation,
             style='Accent.TButton',
             width=20
@@ -315,7 +315,7 @@ class BaseAutomationTab(ttk.Frame):
             search_container = ttk.Frame(toolbar)
             search_container.pack(side='right', padx=10, pady=5)
             
-            ttk.Label(search_container, text="Search:", font=('', 10)).pack(side='left', padx=(0, 5))
+            ttk.Label(search_container, text="Search:", font=('', 9)).pack(side='left', padx=(0, 5))
             search_var = tk.StringVar()
             search_entry = ttk.Entry(search_container, textvariable=search_var, width=30, font=('', 9))
             search_entry.pack(side='left', padx=2)
@@ -490,12 +490,11 @@ class BaseAutomationTab(ttk.Frame):
                 for index, (val, item) in enumerate(items):
                     tree.move(item, '', index)
                 
-                # Update heading with sort indicator
-                indicator = " ^" if reverse else " v"
-                tree.heading(col, text=f"{col}{indicator}", 
+                # Update heading
+                tree.heading(col, text=col, 
                            command=lambda: sort_column(col, not reverse))
                 
-                # Clear other column indicators
+                # Clear other column headings
                 for other_col in all_columns:
                     if other_col != col:
                         tree.heading(other_col, text=other_col)
@@ -871,10 +870,10 @@ class BaseAutomationTab(ttk.Frame):
         self._cleanup_automation()
         
         if success:
-            self.status_var.set("Completed!")
+            self.status_var.set(f"Completed!")
             messagebox.showinfo("Success", f"{self.tab_name} completed!")
         else:
-            self.status_var.set("Failed")
+            self.status_var.set(f"Failed")
             msg = f"{self.tab_name} failed!"
             if error_msg:
                 msg += f"\n\n{error_msg}"
@@ -886,7 +885,7 @@ class BaseAutomationTab(ttk.Frame):
         self.start_button.config(state='disabled' if running else 'normal')
         self.stop_button.config(state='normal' if running else 'disabled')
         if running:
-            self.status_var.set("Running...")
+            self.status_var.set(f"Running...")
 
     def stop_automation(self):
         """Stop running automation."""

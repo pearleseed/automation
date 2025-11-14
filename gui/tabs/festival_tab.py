@@ -38,7 +38,7 @@ class FestivalTab(BaseAutomationTab):
         ttk.Label(output_inner, text="Output File:", font=('', 10)).grid(row=0, column=0, sticky='w', pady=2)
         ttk.Entry(output_inner, textvariable=self.output_file_var, width=30, font=('', 10)).grid(row=0, column=1, sticky='ew', padx=5, pady=2)
         ttk.Button(output_inner, text="Browse", command=self.browse_output, width=8).grid(row=0, column=2, pady=2, ipady=5)
-        ttk.Label(output_inner, text="(Optional - auto-generated if empty)", font=('', 8), foreground='#6b7280').grid(row=1, column=0, columnspan=3, sticky='w')
+        ttk.Label(output_inner, text="(Optional - auto-generated if empty)", font=('', 8), foreground='gray').grid(row=1, column=0, columnspan=3, sticky='w')
 
         output_inner.columnconfigure(1, weight=1)
 
