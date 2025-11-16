@@ -16,10 +16,12 @@ Hopping flow (World Hopping):
 from typing import Dict, Optional, Any
 from datetime import datetime
 from airtest.core.api import sleep
+import time
+import os
 
-from core.base import BaseAutomation, CancellationError
+from core.base import BaseAutomation, CancellationError, ExecutionStep, StepResult
 from core.agent import Agent
-from core.utils import get_logger
+from core.utils import get_logger, StructuredLogger, ensure_directory
 from core.data import ResultWriter, load_data
 from core.config import (
     HOPPING_ROI_CONFIG, get_hopping_config, merge_config
@@ -30,43 +32,32 @@ logger = get_logger(__name__)
 
 
 class HoppingAutomation(BaseAutomation):
-    """Automate World Hopping."""
+    """Automate World Hopping with OCR verification."""
 
     def __init__(self, agent: Agent, config: Optional[Dict[str, Any]] = None, cancel_event=None):
-        # Merge config: base config from HOPPING_CONFIG + custom config
         base_config = get_hopping_config()
         cfg = merge_config(base_config, config) if config else base_config
-
-        # Initialize base class with agent, config, ROI config, and cancellation event
         super().__init__(agent, cfg, HOPPING_ROI_CONFIG, cancel_event=cancel_event)
 
-        # Hopping-specific timing
+        self.config = cfg
         self.loading_wait = cfg['loading_wait']
         self.cooldown_wait = cfg['cooldown_wait']
-
-        # Hop settings
         self.max_hops = cfg['max_hops']
         self.retry_on_fail = cfg['retry_on_fail']
         self.max_retries = cfg['max_retries']
+        
+        log_dir = os.path.join(self.results_dir, "logs")
+        ensure_directory(log_dir)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = os.path.join(log_dir, f"hopping_{timestamp}.log")
+        self.structured_logger = StructuredLogger(name="HoppingAutomation", log_file=log_file)
 
         logger.info("HoppingAutomation initialized")
+        self.structured_logger.info(f"Log: {log_file}")
 
     def process_world_name(self, raw_world_name: str) -> Dict[str, Any]:
-        """
-        Process world name with OCR text cleaning.
-        
-        Args:
-            raw_world_name: Raw OCR text from world name ROI
-            
-        Returns:
-            Dict with processed world name and metadata
-        """
-        result = {
-            'world_name': 'Unknown',
-            'normalized_name': '',
-            'raw_name': raw_world_name,
-            'confidence': 0.0
-        }
+        """Process world name with OCR text cleaning."""
+        result = {'world_name': 'Unknown', 'normalized_name': '', 'raw_name': raw_world_name, 'confidence': 0.0}
         
         try:
             if raw_world_name:
@@ -90,17 +81,7 @@ class HoppingAutomation(BaseAutomation):
 
     def verify_hop_success(self, before_world: str, after_world: str, 
                           use_enhanced_comparison: bool = True) -> bool:
-        """
-        Check if hop was successful (world changed).
-        
-        Args:
-            before_world: World name before hop
-            after_world: World name after hop
-            use_enhanced_comparison: Use OCRTextProcessor for comparison
-            
-        Returns:
-            bool: True if world changed (hop successful)
-        """
+        """Check if hop was successful (world changed)."""
         if not before_world or not after_world:
             return False
 
@@ -137,8 +118,6 @@ class HoppingAutomation(BaseAutomation):
 
     def run_hopping_stage(self, hop_data: Dict[str, Any], hop_idx: int) -> Dict[str, Any]:
         """Run hopping stage."""
-        logger.info(f"\n{'='*50}\nHOP {hop_idx}\n{'='*50}")
-
         folder_name = f"hopping_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         result = {
             'hop_idx': hop_idx,
@@ -146,72 +125,167 @@ class HoppingAutomation(BaseAutomation):
             'world_after': 'Unknown',
             'success': False
         }
+        
+        max_retries = self.config.get('max_step_retries', 3)
+        retry_delay = self.config.get('retry_delay', 1.0)
+        
+        start_time = time.time()
+        self.structured_logger.stage_start(hop_idx, "WORLD HOP", f"Loading wait: {self.loading_wait}s")
+        
+        screenshot_before = None
+        screenshot_after = None
 
         try:
             # Step 1: Check current world (before hop)
-            logger.info("Step 1: Check current world")
-            screenshot_before = self.snapshot_and_save(folder_name, f"{hop_idx:02d}_before.png")
-            if screenshot_before is not None:
-                world_info_before = self.scan_screen_roi(screenshot_before, ['world_name'])
-                raw_world_before = world_info_before.get('world_name', 'Unknown')
-                processed_before = self.process_world_name(raw_world_before)
-                result['world_before'] = processed_before['world_name']
-                result['world_before_confidence'] = processed_before['confidence']
+            def capture_before():
+                nonlocal screenshot_before
+                screenshot_before = self.snapshot_and_save(folder_name, f"{hop_idx:02d}_before.png")
+                if screenshot_before is not None:
+                    world_info_before = self.scan_screen_roi(screenshot_before, ['world_name'])
+                    raw_world_before = world_info_before.get('world_name', 'Unknown')
+                    processed_before = self.process_world_name(raw_world_before)
+                    result['world_before'] = processed_before['world_name']
+                    result['world_before_confidence'] = processed_before['confidence']
+                    self.structured_logger.info(f"Current world: {result['world_before']} (conf: {result['world_before_confidence']:.2f})")
+                return screenshot_before is not None
+            
+            step1 = ExecutionStep(
+                step_num=1,
+                name="Check Current World",
+                action=capture_before,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step1.execute() != StepResult.SUCCESS:
+                result['success'] = False
+                return result
 
             # Step 2: Touch World Map
-            logger.info("Step 2: Touch World Map")
-            if not self.touch_template("tpl_world_map.png"):
+            step2 = ExecutionStep(
+                step_num=2,
+                name="Touch World Map",
+                action=lambda: self.touch_template("tpl_world_map.png"),
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0.5,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step2.execute() != StepResult.SUCCESS:
+                result['success'] = False
                 return result
 
             # Step 3: Touch Hop Button
-            logger.info("Step 3: Touch Hop Button")
-            if not self.touch_template("tpl_hop_button.png"):
+            step3 = ExecutionStep(
+                step_num=3,
+                name="Touch Hop Button",
+                action=lambda: self.touch_template("tpl_hop_button.png"),
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0.5,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step3.execute() != StepResult.SUCCESS:
+                result['success'] = False
                 return result
 
             # Step 4: Confirm hop
-            logger.info("Step 4: Confirm hop")
-            if not self.touch_template("tpl_confirm_hop.png"):
+            step4 = ExecutionStep(
+                step_num=4,
+                name="Confirm Hop",
+                action=lambda: self.touch_template("tpl_confirm_hop.png"),
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step4.execute() != StepResult.SUCCESS:
+                result['success'] = False
                 return result
 
             # Step 5: Wait for loading
-            logger.info(f"Step 5: Wait for loading ({self.loading_wait}s)")
+            self.structured_logger.subsection_header("LOADING")
+            self.structured_logger.info(f"Waiting {self.loading_wait}s for world transition...")
             sleep(self.loading_wait)
 
             # Step 6: Check new world (after hop)
-            logger.info("Step 6: Check new world")
-            screenshot_after = self.snapshot_and_save(folder_name, f"{hop_idx:02d}_after.png")
-            if screenshot_after is None:
+            self.structured_logger.subsection_header("VERIFICATION")
+            
+            def capture_after():
+                nonlocal screenshot_after
+                screenshot_after = self.snapshot_and_save(folder_name, f"{hop_idx:02d}_after.png")
+                if screenshot_after is not None:
+                    world_info_after = self.scan_screen_roi(screenshot_after, ['world_name'])
+                    raw_world_after = world_info_after.get('world_name', 'Unknown')
+                    processed_after = self.process_world_name(raw_world_after)
+                    result['world_after'] = processed_after['world_name']
+                    result['world_after_confidence'] = processed_after['confidence']
+                    self.structured_logger.info(f"New world: {result['world_after']} (conf: {result['world_after_confidence']:.2f})")
+                return screenshot_after is not None
+            
+            step6 = ExecutionStep(
+                step_num=6,
+                name="Check New World",
+                action=capture_after,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step6.execute() != StepResult.SUCCESS:
+                result['success'] = False
                 return result
 
-            world_info_after = self.scan_screen_roi(screenshot_after, ['world_name'])
-            raw_world_after = world_info_after.get('world_name', 'Unknown')
-            processed_after = self.process_world_name(raw_world_after)
-            result['world_after'] = processed_after['world_name']
-            result['world_after_confidence'] = processed_after['confidence']
-
-            # Step 7: Verify hop success (with enhanced comparison)
-            logger.info("Step 7: Verify hop success")
-            success = self.verify_hop_success(
-                result['world_before'], 
-                result['world_after'],
-                use_enhanced_comparison=True
+            # Step 7: Verify hop success
+            def verify_hop():
+                self.check_cancelled("Hop verification")
+                success = self.verify_hop_success(
+                    result['world_before'], 
+                    result['world_after'],
+                    use_enhanced_comparison=True
+                )
+                result['success'] = success
+                
+                if success:
+                    self.structured_logger.info(f"✓ Hop successful: {result['world_before']} → {result['world_after']}")
+                else:
+                    self.structured_logger.warning(f"✗ Hop failed: {result['world_before']} → {result['world_after']}")
+                
+                return success
+            
+            step7 = ExecutionStep(
+                step_num=7,
+                name="Verify Hop Success",
+                action=verify_hop,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
             )
-            result['success'] = success
+            if step7.execute() != StepResult.SUCCESS:
+                result['success'] = False
+                return result
 
-            if success:
-                logger.info(f"✓ Hop successful: {result['world_before']} → {result['world_after']} "
-                           f"(confidence: before={result.get('world_before_confidence', 0):.2f}, "
-                           f"after={result.get('world_after_confidence', 0):.2f})")
-            else:
-                logger.warning(f"✗ Hop may have failed: {result['world_before']} → {result['world_after']} "
-                             f"(confidence: before={result.get('world_before_confidence', 0):.2f}, "
-                             f"after={result.get('world_after_confidence', 0):.2f})")
-
-            logger.info(f"{'='*50}\n{'✓ SUCCESS' if success else '✗ FAILED'}: Hop {hop_idx}\n{'='*50}")
+            duration = time.time() - start_time
+            self.structured_logger.stage_end(hop_idx, result['success'], duration)
             return result
 
+        except CancellationError:
+            self.structured_logger.warning(f"Hop {hop_idx} cancelled by user")
+            result['success'] = False
+            return result
         except Exception as e:
-            logger.error(f"✗ Hop {hop_idx}: {e}")
+            self.structured_logger.error(f"Hop {hop_idx} failed with exception: {e}")
+            import traceback
+            self.structured_logger.error(traceback.format_exc())
+            result['success'] = False
             return result
 
     def run_all_hops(self, data_path: Optional[str] = None, num_hops: Optional[int] = None,
@@ -227,12 +301,15 @@ class HoppingAutomation(BaseAutomation):
         Returns:
             bool: True if successful
         """
+        result_writer = None
+        start_time = time.time()
+        
         try:
             # Mode 1: Load from data file
             if data_path:
                 test_data = load_data(data_path)
                 if not test_data:
-                    logger.error("✗ No data loaded")
+                    self.structured_logger.error(f"Failed to load data from {data_path}")
                     return False
 
                 # Setup output
@@ -240,8 +317,15 @@ class HoppingAutomation(BaseAutomation):
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     output_path = f"{self.results_dir}/hopping_batch_{timestamp}.csv"
 
-                result_writer = ResultWriter(output_path)
-                logger.info(f"Batch sessions: {len(test_data)} | Output: {output_path}")
+                result_writer = ResultWriter(output_path, auto_write=True, resume=True)
+                
+                config_info = {
+                    "Mode": "Batch (Data File)",
+                    "Total Sessions": len(test_data),
+                    "Output Path": output_path,
+                    "Data Source": data_path
+                }
+                self.structured_logger.automation_start("HOPPING AUTOMATION", config_info)
 
                 all_success = True
 
@@ -256,7 +340,7 @@ class HoppingAutomation(BaseAutomation):
                     if 'cooldown_wait' in session_data:
                         self.cooldown_wait = float(session_data['cooldown_wait'])
 
-                    logger.info(f"\n{'='*60}\nSESSION {idx}/{len(test_data)}: {session_num_hops} hops\n{'='*60}")
+                    self.structured_logger.section_header(f"SESSION {idx}/{len(test_data)}: {session_num_hops} hops")
 
                     # Run hops for this session
                     session_start = datetime.now()
@@ -294,12 +378,23 @@ class HoppingAutomation(BaseAutomation):
                         error_message=None if session_success else f"Only {successful_hops}/{session_num_hops} hops succeeded"
                     )
 
-                    logger.info(f"Session {idx} completed: {successful_hops}/{session_num_hops} successful")
+                    self.structured_logger.info(f"Session {idx} completed: {successful_hops}/{session_num_hops} successful")
                     sleep(2.0)
 
                 # Save results
-                result_writer.write()
+                result_writer.flush()
                 result_writer.print_summary()
+                
+                # Log completion
+                duration = time.time() - start_time
+                summary = {
+                    "Total Sessions": len(test_data),
+                    "Success": "All" if all_success else "Partial",
+                    "Duration": f"{duration:.2f}s",
+                    "Results File": output_path
+                }
+                self.structured_logger.automation_end("HOPPING AUTOMATION", all_success, summary)
+                
                 return all_success
 
             # Mode 2: Direct num_hops
@@ -309,8 +404,14 @@ class HoppingAutomation(BaseAutomation):
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     output_path = f"{self.results_dir}/hopping_results_{timestamp}.csv"
 
-                result_writer = ResultWriter(output_path)
-                logger.info(f"World hops: {num_hops} | Output: {output_path}")
+                result_writer = ResultWriter(output_path, auto_write=True, resume=True)
+                
+                config_info = {
+                    "Mode": "Direct",
+                    "Total Hops": num_hops,
+                    "Output Path": output_path
+                }
+                self.structured_logger.automation_start("HOPPING AUTOMATION", config_info)
 
                 successful_hops = 0
 
@@ -340,24 +441,43 @@ class HoppingAutomation(BaseAutomation):
                     sleep(0.5)
 
                 # Save results
-                result_writer.write()
+                result_writer.flush()
                 result_writer.print_summary()
 
                 # Summary statistics
+                duration = time.time() - start_time
                 success_rate = (successful_hops / num_hops) * 100 if num_hops > 0 else 0
-                logger.info(f"\nHopping Summary:")
-                logger.info(f"Total hops: {num_hops}")
-                logger.info(f"Successful: {successful_hops}")
-                logger.info(f"Success rate: {success_rate:.1f}%")
+                
+                summary = {
+                    "Total Hops": num_hops,
+                    "Successful": successful_hops,
+                    "Success Rate": f"{success_rate:.1f}%",
+                    "Duration": f"{duration:.2f}s",
+                    "Results File": output_path
+                }
+                self.structured_logger.automation_end("HOPPING AUTOMATION", True, summary)
 
                 return True
 
             else:
-                logger.error("✗ Either 'data_path' or 'num_hops' must be provided")
+                self.structured_logger.error("✗ Either 'data_path' or 'num_hops' must be provided")
                 return False
 
+        except CancellationError:
+            if result_writer:
+                result_writer.flush()
+                result_writer.print_summary()
+            self.structured_logger.warning("Automation cancelled by user")
+            return False
+            
         except Exception as e:
-            logger.error(f"✗ Run all hops: {e}")
+            self.structured_logger.error(f"Automation failed with exception: {e}")
+            import traceback
+            self.structured_logger.error(traceback.format_exc())
+            
+            if result_writer:
+                result_writer.flush()
+            
             return False
 
     def run(self, config: Optional[Dict[str, Any]] = None, data_path: Optional[str] = None) -> bool:
@@ -382,27 +502,29 @@ class HoppingAutomation(BaseAutomation):
             # Mode 2: Load from file
             hopping.run(data_path='./data/hopping_tests.csv')
         """
-        logger.info("="*60 + "\nHOPPING AUTOMATION START\n" + "="*60)
-
         try:
             self.check_cancelled("before starting")
         except CancellationError:
+            self.structured_logger.warning("Automation cancelled before starting")
             return False
 
         if not self.agent.is_device_connected():
-            logger.error("✗ Device not connected")
+            self.structured_logger.error("✗ Device not connected")
             return False
 
-        # Mode 2: Load from data file
-        if data_path:
-            success = self.run_all_hops(data_path=data_path)
-        # Mode 1: Direct config
-        elif config:
-            num_hops = config.get('num_hops', 1)
-            success = self.run_all_hops(num_hops=num_hops)
-        else:
-            logger.error("✗ Either 'config' or 'data_path' must be provided")
-            return False
+        try:
+            # Mode 2: Load from data file
+            if data_path:
+                success = self.run_all_hops(data_path=data_path)
+            # Mode 1: Direct config
+            elif config:
+                num_hops = config.get('num_hops', 1)
+                success = self.run_all_hops(num_hops=num_hops)
+            else:
+                self.structured_logger.error("✗ Either 'config' or 'data_path' must be provided")
+                return False
 
-        logger.info("="*60 + f"\n{'✓ COMPLETED' if success else '✗ FAILED'}\n" + "="*60)
-        return success
+            return success
+        except CancellationError:
+            self.structured_logger.warning("Automation cancelled")
+            return False

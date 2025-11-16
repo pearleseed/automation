@@ -8,6 +8,7 @@ import os
 import cv2
 from typing import Dict, List, Optional, Any, Callable
 from airtest.core.api import Template, exists, sleep
+from enum import Enum
 
 from .agent import Agent
 from .utils import get_logger, ensure_directory
@@ -22,30 +23,100 @@ class CancellationError(Exception):
     pass
 
 
+class StepResult(Enum):
+    """Result of a step execution."""
+    SUCCESS = "success"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class ExecutionStep:
+    """Encapsulates a single execution step with retry logic and cancellation support."""
+    
+    def __init__(self, step_num: int, name: str, action: Callable, max_retries: int = 5,
+                 retry_delay: float = 1.0, optional: bool = False, post_delay: float = 0.5,
+                 cancel_checker: Optional[Callable] = None, logger: Optional[Any] = None):
+        self.step_num = step_num
+        self.name = name
+        self.action = action
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.optional = optional
+        self.post_delay = post_delay
+        self.cancel_checker = cancel_checker
+        self.logger = logger or get_logger(__name__)
+        self.result = None
+        self.error_message = ""
+    
+    def execute(self) -> StepResult:
+        """Execute the step with retry logic."""
+        if self.cancel_checker:
+            self.cancel_checker(self.name)
+        
+        if hasattr(self.logger, 'step') and callable(getattr(self.logger, 'step', None)):
+            getattr(self.logger, 'step')(self.step_num, self.name)
+        else:
+            self.logger.info(f"[STEP {self.step_num:2d}] {self.name}")
+        for attempt in range(1, self.max_retries + 1):
+            if self.cancel_checker:
+                self.cancel_checker(self.name)
+            
+            try:
+                result = self.action()
+                
+                if result:
+                    self.result = StepResult.SUCCESS
+                    if hasattr(self.logger, 'step_success') and callable(getattr(self.logger, 'step_success', None)):
+                        getattr(self.logger, 'step_success')(self.step_num, self.name)
+                    else:
+                        self.logger.info(f"[STEP {self.step_num:2d}] ✓ {self.name} - SUCCESS")
+                    
+                    if self.post_delay > 0:
+                        sleep(self.post_delay)
+                    
+                    return StepResult.SUCCESS
+                
+                if attempt < self.max_retries:
+                    if hasattr(self.logger, 'step_retry') and callable(getattr(self.logger, 'step_retry', None)):
+                        getattr(self.logger, 'step_retry')(self.step_num, self.name, attempt, self.max_retries)
+                    else:
+                        self.logger.warning(f"[STEP {self.step_num:2d}] {self.name} - RETRY {attempt}/{self.max_retries}")
+                    sleep(self.retry_delay)
+                    
+            except CancellationError:
+                raise
+            except Exception as e:
+                self.error_message = str(e)
+                if attempt < self.max_retries:
+                    self.logger.warning(f"[STEP {self.step_num:2d}] {self.name} - Error: {e}, retrying...")
+                    sleep(self.retry_delay)
+                else:
+                    break
+        if self.optional:
+            self.result = StepResult.SKIPPED
+            self.logger.info(f"[STEP {self.step_num:2d}] {self.name} - SKIPPED (optional)")
+            return StepResult.SKIPPED
+        
+        self.result = StepResult.FAILED
+        error_info = f" | {self.error_message}" if self.error_message else ""
+        if hasattr(self.logger, 'step_failed') and callable(getattr(self.logger, 'step_failed', None)):
+            getattr(self.logger, 'step_failed')(self.step_num, self.name, self.error_message)
+        else:
+            self.logger.error(f"[STEP {self.step_num:2d}] ✗ {self.name} - FAILED{error_info}")
+        return StepResult.FAILED
+
+
 class BaseAutomation:
     """Base class for all automation modules with common functionality."""
 
     def __init__(self, agent: Agent, config: Dict[str, Any], roi_config_dict: Dict[str, Dict[str, Any]], cancel_event=None):
-        """
-        Initialize base automation.
-
-        Args:
-            agent: Agent instance for device interaction
-            config: Configuration dictionary
-            roi_config_dict: ROI configuration dictionary for this automation type
-            cancel_event: Optional threading.Event for cancellation checking
-        """
         self.agent = agent
         self.roi_config_dict = roi_config_dict
         self.cancel_event = cancel_event
-
-        # Extract common config
         self.templates_path = config['templates_path']
         self.snapshot_dir = config['snapshot_dir']
         self.results_dir = config['results_dir']
         self.wait_after_touch = config['wait_after_touch']
-
-        # Ensure directories exist
         ensure_directory(self.snapshot_dir)
         ensure_directory(self.results_dir)
     
@@ -59,49 +130,9 @@ class BaseAutomation:
             msg = f"Cancellation requested{f' during {context}' if context else ''}"
             logger.info(msg)
             raise CancellationError(msg)
-    
-    def retry_with_cancellation(self, func: Callable, max_retries: int, retry_delay: float = 1.0,
-                                 step_name: str = "", *args, **kwargs):
-        """
-        Retry a function with cancellation checking.
-        
-        Args:
-            func: Function to retry (should return truthy on success)
-            max_retries: Maximum number of retry attempts
-            retry_delay: Delay between retries
-            step_name: Name of step for logging
-            *args, **kwargs: Arguments to pass to func
-            
-        Returns:
-            Result from func if successful
-            
-        Raises:
-            CancellationError: If cancellation is requested
-        """
-        retry_count = 0
-        while retry_count < max_retries:
-            self.check_cancelled(step_name)
-            result = func(*args, **kwargs)
-            if result:
-                return result
-            retry_count += 1
-            if retry_count < max_retries:
-                logger.warning(f"{step_name}: Attempt {retry_count}/{max_retries} failed, retrying...")
-                sleep(retry_delay)
-        logger.error(f"{step_name}: Failed after {max_retries} attempts")
-        return None
 
     def touch_template(self, template_name: str, optional: bool = False) -> bool:
-        """
-        Touch template image.
-
-        Args:
-            template_name: Template filename
-            optional: If True, return success even if template not found
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
+        """Touch template image."""
         try:
             self.check_cancelled(f"touch_template({template_name})")
             
@@ -132,16 +163,7 @@ class BaseAutomation:
             return optional
 
     def get_screenshot(self, screenshot: Optional[Any] = None) -> Optional[Any]:
-        """
-        Get screenshot (use cached or take new).
-        Helper function to avoid duplicate screenshot logic.
-
-        Args:
-            screenshot: Cached screenshot or None to take new
-
-        Returns:
-            Optional[Any]: Screenshot or None if failed
-        """
+        """Get screenshot (use cached or take new)."""
         if screenshot is not None:
             return screenshot
         
@@ -151,33 +173,14 @@ class BaseAutomation:
         return screenshot
 
     def get_roi_config(self, roi_name: str) -> Optional[Dict[str, Any]]:
-        """
-        Get ROI configuration.
-        Helper function to avoid duplicate ROI config logic.
-
-        Args:
-            roi_name: ROI name
-
-        Returns:
-            Optional[Dict[str, Any]]: ROI config or None if not found
-        """
+        """Get ROI configuration."""
         if roi_name not in self.roi_config_dict:
             logger.error(f"ROI '{roi_name}' not found")
             return None
         return self.roi_config_dict[roi_name]
 
     def crop_roi(self, screenshot: Any, roi_name: str) -> Optional[Any]:
-        """
-        Crop ROI from screenshot.
-        Helper function to avoid duplicate crop logic.
-
-        Args:
-            screenshot: Screenshot to crop from
-            roi_name: ROI name
-
-        Returns:
-            Optional[Any]: Cropped ROI image or None if failed
-        """
+        """Crop ROI from screenshot."""
         roi_config = self.get_roi_config(roi_name)
         if roi_config is None:
             return None
@@ -193,16 +196,7 @@ class BaseAutomation:
         return roi_image
 
     def snapshot_and_save(self, folder_name: str, filename: str) -> Optional[Any]:
-        """
-        Take screenshot and save to folder.
-
-        Args:
-            folder_name: Folder name under snapshot_dir
-            filename: Filename to save
-
-        Returns:
-            Optional[Any]: Screenshot array or None if failed
-        """
+        """Take screenshot and save to folder."""
         try:
             screenshot = self.agent.snapshot()
             if screenshot is None:
@@ -220,16 +214,7 @@ class BaseAutomation:
             return None
 
     def ocr_roi(self, roi_name: str, screenshot: Optional[Any] = None) -> str:
-        """
-        OCR specific ROI region using agent.ocr().
-
-        Args:
-            roi_name: ROI name
-            screenshot: Screenshot for OCR, None = take new
-
-        Returns:
-            str: OCR text from ROI region (cleaned)
-        """
+        """OCR specific ROI region using agent.ocr()."""
         try:
             # Get ROI config using helper
             roi_config = self.get_roi_config(roi_name)
@@ -240,30 +225,19 @@ class BaseAutomation:
             x1, x2, y1, y2 = coords
             region = (x1, y1, x2, y2)
 
-            # Use agent's methods directly
             if screenshot is None:
-                # Use agent.ocr() with region - more efficient
                 ocr_result = self.agent.ocr(region)
             else:
-                # Crop ROI using helper
                 roi_image = self.crop_roi(screenshot, roi_name)
-                if roi_image is None:
+                if roi_image is None or self.agent.ocr_engine is None:
                     return ""
-                
-                if self.agent.ocr_engine is None:
-                    logger.error("OCR engine not initialized")
-                    return ""
-                
                 ocr_result = self.agent.ocr_engine.recognize(roi_image)
 
             if ocr_result is None:
                 logger.warning(f"✗ ROI '{roi_name}': OCR failed")
                 return ""
 
-            text = ocr_result.get('text', '').strip()
-            # Use unified TextProcessor (NO DUPLICATION)
-            text = self._clean_ocr_text(text)
-
+            text = self._clean_ocr_text(ocr_result.get('text', '').strip())
             logger.debug(f"ROI '{roi_name}': '{text}'")
             return text
 
@@ -273,38 +247,15 @@ class BaseAutomation:
 
     @staticmethod
     def _clean_ocr_text(text: str) -> str:
-        """
-        Clean OCR text using unified TextProcessor.
-        
-        Args:
-            text: Text to clean
-            
-        Returns:
-            str: Cleaned text
-        """
+        """Clean OCR text."""
         if not text:
             return ""
-        
-        # Remove newlines
         text = text.replace('\n', ' ').replace('\r', '')
-        
-        # Remove extra whitespace
-        text = ' '.join(text.split())
-        
-        return text.strip()
+        return ' '.join(text.split()).strip()
 
     def scan_screen_roi(self, screenshot: Optional[Any] = None,
                        roi_names: Optional[List[str]] = None) -> Dict[str, Any]:
-        """
-        Scan screen according to defined ROI regions.
-
-        Args:
-            screenshot: Screenshot to scan, None = take new
-            roi_names: List of ROI names to scan, None = scan all
-
-        Returns:
-            Dict[str, Any]: Dictionary with ROI name as key, OCR text as value
-        """
+        """Scan screen according to defined ROI regions."""
         try:
             # Get screenshot using helper
             screenshot = self.get_screenshot(screenshot)
@@ -334,12 +285,7 @@ class BaseAutomation:
             return {}
 
     def snapshot_and_ocr(self) -> List[Dict[str, Any]]:
-        """
-        Take screenshot and OCR to get text + coordinates using agent.ocr().
-
-        Returns:
-            List[Dict[str, Any]]: List of detected text with positions
-        """
+        """Take screenshot and OCR to get text + coordinates using agent.ocr()."""
         try:
             # Use agent.ocr() directly - more efficient
             ocr_result = self.agent.ocr()
@@ -365,37 +311,48 @@ class BaseAutomation:
             logger.error(f"✗ OCR: {e}")
             return []
 
-    def find_text(self, ocr_results: List[Dict[str, Any]], search_text: str) -> Optional[Dict[str, Any]]:
-        """
-        Find text in OCR results.
-
-        Args:
-            ocr_results: List of OCR results
-            search_text: Text to search for
-
-        Returns:
-            Optional[Dict[str, Any]]: Found text info or None
-        """
-        search_lower = search_text.lower().strip()
-        for result in ocr_results:
-            if search_lower in result['text'].lower():
-                return result
-        return None
+    def find_text(self, ocr_results: List[Dict[str, Any]], search_text: str, 
+                  threshold: float = 0.7, use_fuzzy: bool = True) -> Optional[Dict[str, Any]]:
+        """Find text in OCR results using fuzzy matching."""
+        if not ocr_results or not search_text:
+            return None
+        
+        if use_fuzzy:
+            best_match, best_similarity = None, 0.0
+            
+            for result in ocr_results:
+                ocr_text = result.get('text', '')
+                if not ocr_text:
+                    continue
+                
+                similarity = TextProcessor.calculate_similarity(
+                    TextProcessor.normalize_text(ocr_text),
+                    TextProcessor.normalize_text(search_text)
+                )
+                
+                normalized_ocr = TextProcessor.normalize_text(ocr_text)
+                normalized_search = TextProcessor.normalize_text(search_text)
+                if normalized_search in normalized_ocr or normalized_ocr in normalized_search:
+                    similarity = max(similarity, 0.9)
+                
+                if similarity > best_similarity and similarity >= threshold:
+                    best_similarity = similarity
+                    best_match = result
+                    best_match['similarity'] = similarity
+            
+            if best_match:
+                logger.debug(f"Fuzzy match: '{best_match.get('text')}' ~ '{search_text}' (similarity: {best_similarity:.2f})")
+            return best_match
+        else:
+            search_lower = search_text.lower().strip()
+            for result in ocr_results:
+                if search_lower in result.get('text', '').lower():
+                    result['similarity'] = 1.0
+                    return result
+            return None
 
     def ocr_roi_with_lines(self, roi_name: str) -> List[Dict[str, Any]]:
-        """
-        OCR specific ROI region and return individual text lines with coordinates.
-        
-        This method is useful when you need to find and interact with specific text
-        within a defined region, avoiding false positives from other screen areas.
-
-        Args:
-            roi_name: ROI name from roi_config_dict
-
-        Returns:
-            List[Dict[str, Any]]: List of detected text with absolute screen positions
-                [{'text': str, 'center': (x, y)}, ...]
-        """
+        """OCR specific ROI region and return individual text lines with coordinates."""
         try:
             # Get ROI config using helper
             roi_config = self.get_roi_config(roi_name)
@@ -432,24 +389,14 @@ class BaseAutomation:
             logger.error(f"✗ OCR ROI with lines '{roi_name}': {e}")
             return []
 
-    def find_and_touch_in_roi(self, roi_name: str, search_text: str) -> bool:
-        """
-        Find text in specific ROI region and touch it.
-        
-        Searches for text only within the defined ROI area, reducing false 
-        positives and improving accuracy by focusing on the relevant screen region.
-
-        Args:
-            roi_name: ROI name from roi_config_dict to search within
-            search_text: Text to search and touch
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
+    def find_and_touch_in_roi(self, roi_name: str, search_text: str,
+                              threshold: float = 0.7, use_fuzzy: bool = True) -> bool:
+        """Find text in specific ROI region and touch it using fuzzy matching."""
         try:
             self.check_cancelled(f"find_and_touch_in_roi({roi_name}, {search_text})")
 
-            logger.info(f"Find & touch '{search_text}' in ROI '{roi_name}'")
+            match_type = "fuzzy" if use_fuzzy else "exact"
+            logger.info(f"Find & touch '{search_text}' in ROI '{roi_name}' ({match_type} matching)")
 
             # OCR the ROI to get list of texts with coordinates
             ocr_results = self.ocr_roi_with_lines(roi_name)
@@ -458,20 +405,33 @@ class BaseAutomation:
                 logger.warning(f"✗ No text found in ROI '{roi_name}'")
                 return False
 
+            # Log OCR results for debugging
+            logger.debug(f"OCR found {len(ocr_results)} text(s) in ROI '{roi_name}': {[r.get('text', '') for r in ocr_results]}")
+
             self.check_cancelled(f"find_and_touch_in_roi({roi_name}, {search_text})")
 
-            # Find the text in results
-            text_info = self.find_text(ocr_results, search_text)
+            # Find the text in results using fuzzy matching
+            text_info = self.find_text(ocr_results, search_text, threshold=threshold, use_fuzzy=use_fuzzy)
 
             if text_info:
                 self.check_cancelled(f"find_and_touch_in_roi({roi_name}, {search_text})")
-                logger.info(f"✓ Found '{search_text}' in ROI '{roi_name}' at {text_info['center']}")
+                
+                matched_text = text_info.get('text', '')
+                similarity = text_info.get('similarity', 1.0)
+                
+                if use_fuzzy:
+                    logger.info(f"✓ Found '{matched_text}' ~ '{search_text}' in ROI '{roi_name}' "
+                              f"(similarity: {similarity:.2f}) at {text_info['center']}")
+                else:
+                    logger.info(f"✓ Found '{matched_text}' in ROI '{roi_name}' at {text_info['center']}")
+                
                 success = self.agent.safe_touch(text_info['center'])
                 if success:
                     sleep(self.wait_after_touch)
                 return success
 
-            logger.warning(f"✗ Text '{search_text}' not found in ROI '{roi_name}'")
+            logger.warning(f"✗ Text '{search_text}' not found in ROI '{roi_name}' "
+                         f"(threshold: {threshold:.2f}, fuzzy: {use_fuzzy})")
             return False
 
         except CancellationError:

@@ -111,69 +111,6 @@ HOPPING_ROI_CONFIG: Dict[str, Dict[str, Any]] = {
 
 # ==================== UTILITY FUNCTIONS ====================
 
-def get_festivals_roi_config(festivals_roi_name: str) -> Dict[str, Any]:
-    """
-    Get FESTIVALS ROI configuration by name.
-
-    Args:
-        festivals_roi_name (str): FESTIVALS ROI name
-
-    Returns:
-        Dict[str, Any]: FESTIVALS ROI configuration with 'coords' and 'description' keys
-
-    Raises:
-        KeyError: If festivals_roi_name does not exist
-    """
-    if festivals_roi_name not in FESTIVALS_ROI_CONFIG:
-        available = list(FESTIVALS_ROI_CONFIG.keys())
-        raise KeyError(
-            f"FESTIVALS ROI '{festivals_roi_name}' not found. Available ROIs: {available}"
-        )
-    return FESTIVALS_ROI_CONFIG[festivals_roi_name]
-
-
-def get_gacha_roi_config(gacha_roi_name: str) -> Dict[str, Any]:
-    """
-    Get Gacha ROI configuration by name.
-
-    Args:
-        gacha_roi_name (str): Gacha ROI name
-
-    Returns:
-        Dict[str, Any]: Gacha ROI configuration with 'coords' and 'description' keys
-
-    Raises:
-        KeyError: If gacha_roi_name does not exist
-    """
-    if gacha_roi_name not in GACHA_ROI_CONFIG:
-        available = list(GACHA_ROI_CONFIG.keys())
-        raise KeyError(
-            f"GACHA ROI '{gacha_roi_name}' not found. Available ROIs: {available}"
-        )
-    return GACHA_ROI_CONFIG[gacha_roi_name]
-
-
-def get_hopping_roi_config(hopping_roi_name: str) -> Dict[str, Any]:
-    """
-    Get Hopping ROI configuration by name.
-
-    Args:
-        hopping_roi_name (str): Hopping ROI name
-
-    Returns:
-        Dict[str, Any]: Hopping ROI configuration with 'coords' and 'description' keys
-
-    Raises:
-        KeyError: If hopping_roi_name does not exist
-    """
-    if hopping_roi_name not in HOPPING_ROI_CONFIG:
-        available = list(HOPPING_ROI_CONFIG.keys())
-        raise KeyError(
-            f"HOPPING ROI '{hopping_roi_name}' not found. Available ROIs: {available}"
-        )
-    return HOPPING_ROI_CONFIG[hopping_roi_name]
-
-
 # ==================== DEFAULT PATHS ====================
 # Default paths for the entire system
 
@@ -196,6 +133,17 @@ FESTIVAL_CONFIG: Dict[str, Any] = {
     
     # Timing
     'wait_after_touch': 1.0,
+    
+    # Retry settings
+    'max_step_retries': 5,
+    'retry_delay': 1.0,
+    
+    # Fuzzy matching config (for find_and_touch_in_roi)
+    'fuzzy_matching': {
+        'enabled': True,  # Use fuzzy matching for text search
+        'threshold': 0.7,  # Similarity threshold (0.0-1.0)
+        # 0.9+ = very strict, 0.7-0.8 = balanced, 0.5-0.6 = lenient
+    },
     
     # Detector settings
     'use_detector': True,  # Whether to use detector

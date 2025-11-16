@@ -12,9 +12,9 @@ import cv2
 import numpy as np
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Dict, List, Tuple, Optional, Any, Union, Protocol
+from typing import Dict, List, Tuple, Optional, Any, Protocol
 from functools import lru_cache
 from .agent import Agent
 from .utils import get_logger
@@ -613,76 +613,6 @@ class OCRTextProcessor:
             match_rate=match_rate,
             status=status
         )
-    
-    # Backward compatibility methods (delegate to extractors)
-    @staticmethod
-    def extract_victory_points(text: str) -> Optional[int]:
-        """Extract victory points (backward compatibility)."""
-        result = OCRTextProcessor.extract_field('勝利点数', text)
-        return result.value if result.success else None
-    
-    @staticmethod
-    def extract_rank(text: str) -> Optional[str]:
-        """Extract rank (backward compatibility)."""
-        result = OCRTextProcessor.extract_field('推奨ランク', text)
-        return result.value if result.success else None
-    
-    @staticmethod
-    def extract_s_rank_border(text: str) -> Optional[int]:
-        """Extract S rank border (backward compatibility)."""
-        result = OCRTextProcessor.extract_field('Sランクボーダー', text)
-        return result.value if result.success else None
-    
-    @staticmethod
-    def extract_fp_cost(text: str) -> Optional[int]:
-        """Extract FP cost (backward compatibility)."""
-        result = OCRTextProcessor.extract_field('消費FP', text)
-        return result.value if result.success else None
-    
-    @staticmethod
-    def extract_z_money(text: str) -> Optional[int]:
-        """Extract Z Money (backward compatibility)."""
-        result = OCRTextProcessor.extract_field('獲得ザックマネー', text)
-        return result.value if result.success else None
-    
-    @staticmethod
-    def extract_exp(text: str) -> Optional[int]:
-        """Extract EXP (backward compatibility)."""
-        result = OCRTextProcessor.extract_field('獲得EXP-Ace', text)
-        return result.value if result.success else None
-    
-    @staticmethod
-    def extract_item_quantity(text: str) -> Tuple[Optional[str], Optional[int]]:
-        """Extract item and quantity (backward compatibility)."""
-        result = OCRTextProcessor.extract_field('item_quantity', text)
-        if result.success and isinstance(result.value, tuple):
-            return result.value
-        return (None, None)
-    
-    @staticmethod
-    def extract_venus_memory_quantity(text: str) -> Optional[int]:
-        """Extract Venus Memory quantity (backward compatibility)."""
-        if not text:
-            return None
-        # Clean OCR artifacts then extract number
-        cleaned = TextProcessor.clean_ocr_artifacts(text)
-        numbers = TextProcessor.extract_numbers(cleaned)
-        return numbers[-1] if numbers else None
-    
-    @staticmethod
-    def parse_drop_range(text: str) -> Optional[Tuple[int, int]]:
-        """Parse drop range (backward compatibility)."""
-        result = OCRTextProcessor.extract_field('drop_range', text)
-        return result.value if result.success else None
-    
-    @staticmethod
-    def is_in_drop_range(value: int, range_text: str) -> bool:
-        """Check if value is in drop range."""
-        drop_range = OCRTextProcessor.parse_drop_range(range_text)
-        if drop_range is None:
-            return False
-        min_val, max_val = drop_range
-        return min_val <= value <= max_val
     
     @staticmethod
     def normalize_text_for_comparison(text: str) -> str:

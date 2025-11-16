@@ -1,6 +1,5 @@
 """
 Festival Automation
-
 Standard flow:
 1. touch(Template("tpl_festival.png"))
 2. touch(Template("tpl_event.png"))
@@ -19,26 +18,20 @@ Standard flow:
 14. touch(Template("tpl_ok.png")) if exists - close result (first)
 15. touch(Template("tpl_ok.png")) if exists - close result (second)
 16. Repeat
-
-Key Features:
-- ROI-based text detection: Uses find_and_touch_in_roi() to search text within specific 
-  screen regions, improving accuracy and avoiding false positives
-- Auto-retry: Each step automatically retries on failure
-- Cancellation support: Can be interrupted at any time
-- Resume capability: Can continue from where it left off
-- Detector support: Optional YOLO/Template detection for enhanced verification
 """
 
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
 from airtest.core.api import sleep
+import time
+import os
 
-from core.base import BaseAutomation, CancellationError
+from core.base import BaseAutomation, CancellationError, ExecutionStep, StepResult
 from core.agent import Agent
-from core.utils import get_logger
+from core.utils import get_logger, StructuredLogger, ensure_directory
 from core.data import ResultWriter, load_data
 from core.config import (
-    FESTIVALS_ROI_CONFIG, get_festivals_roi_config,
+    FESTIVALS_ROI_CONFIG,
     FESTIVAL_CONFIG, get_festival_config, merge_config
 )
 from core.detector import YOLODetector, TemplateMatcher, YOLO_AVAILABLE, OCRTextProcessor
@@ -47,150 +40,89 @@ logger = get_logger(__name__)
 
 
 class FestivalAutomation(BaseAutomation):
-    """Festival automation - keep only essential steps."""
+    """Festival automation with OCR verification and optional detector support."""
 
     def __init__(self, agent: Agent, config: Optional[Dict[str, Any]] = None, cancel_event=None):
-        # Merge config: base config from FESTIVAL_CONFIG + custom config
         base_config = get_festival_config()
         cfg = merge_config(base_config, config) if config else base_config
-
-        # Initialize base class with agent, config, ROI config, and cancellation event
         super().__init__(agent, cfg, FESTIVALS_ROI_CONFIG, cancel_event=cancel_event)
-
-        # Store config for later use
+        
         self.config = cfg
-
-        # Initialize detector (YOLO or Template Matching) using factory pattern
+        
+        log_dir = os.path.join(self.results_dir, "logs")
+        ensure_directory(log_dir)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = os.path.join(log_dir, f"festival_{timestamp}.log")
+        self.structured_logger = StructuredLogger(name="FestivalAutomation", log_file=log_file)
+        
         self.detector = None
         self.use_detector = cfg.get('use_detector')
-
         if self.use_detector:
             self.detector = self._create_detector(cfg, agent)
-
+        
+        fuzzy_config = cfg.get('fuzzy_matching', {})
+        self.use_fuzzy_matching = fuzzy_config.get('enabled', True)
+        self.fuzzy_threshold = fuzzy_config.get('threshold', 0.7)
+        
         logger.info("FestivalAutomation initialized")
+        self.structured_logger.info(f"Log: {log_file} | Fuzzy: {self.use_fuzzy_matching} (threshold: {self.fuzzy_threshold})")
 
     def _create_detector(self, cfg: Dict[str, Any], agent: Agent) -> Optional[Any]:
-        """
-        Factory method for creating detectors (YOLO or Template Matching).
-        
-        Args:
-            cfg: Configuration dictionary
-            agent: Agent instance
-            
-        Returns:
-            Detector instance or None if creation fails
-        """
-        detector_type = cfg.get('detector_type', 'template')  # 'yolo', 'template', 'auto'
-        
-        def create_yolo():
-            """Create YOLO detector."""
-            yolo_config = cfg.get('yolo_config', {})
-            return YOLODetector(
-                agent=agent,
-                model_path=yolo_config.get('model_path', 'yolo11n.pt'),
-                confidence=yolo_config.get('confidence', 0.25),
-                device=yolo_config.get('device', 'cpu')
-            )
-        
-        def create_template():
-            """Create Template Matcher."""
-            template_config = cfg.get('template_config', {})
-            return TemplateMatcher(
-                templates_dir=template_config.get('templates_dir', self.templates_path),
-                threshold=template_config.get('threshold', 0.85)
-            )
+        """Factory method for creating detectors (YOLO or Template Matching)."""
+        detector_type = cfg.get('detector_type', 'template')
         
         if detector_type == 'auto':
-            # Auto-select: prefer YOLO, fallback to Template
             if YOLO_AVAILABLE:
                 try:
-                    detector = create_yolo()
+                    yolo_config = cfg.get('yolo_config', {})
                     logger.info("Using YOLO Detector")
-                    return detector
+                    return YOLODetector(agent=agent, model_path=yolo_config.get('model_path', 'yolo11n.pt'),
+                                      confidence=yolo_config.get('confidence', 0.25), device=yolo_config.get('device', 'cpu'))
                 except Exception as e:
                     logger.warning(f"YOLO init failed: {e}, fallback to Template")
-            detector = create_template()
-            logger.info("Using Template Matcher")
-            return detector
+            detector_type = 'template'
         
-        elif detector_type == 'yolo':
+        if detector_type == 'yolo':
             try:
-                detector = create_yolo()
+                yolo_config = cfg.get('yolo_config', {})
                 logger.info("Using YOLO Detector")
-                return detector
+                return YOLODetector(agent=agent, model_path=yolo_config.get('model_path', 'yolo11n.pt'),
+                                  confidence=yolo_config.get('confidence', 0.25), device=yolo_config.get('device', 'cpu'))
             except Exception as e:
                 logger.error(f"YOLO init failed: {e}")
                 return None
         
-        elif detector_type == 'template':
-            detector = create_template()
+        if detector_type == 'template':
+            template_config = cfg.get('template_config', {})
             logger.info("Using Template Matcher")
-            return detector
+            return TemplateMatcher(templates_dir=template_config.get('templates_dir', self.templates_path),
+                                 threshold=template_config.get('threshold', 0.85))
         
         return None
 
     def detect_roi(self, roi_name: str, screenshot: Optional[Any] = None,
                    roi_image: Optional[Any] = None) -> Dict[str, Any]:
-        """
-        Detect objects in ROI using detector (YOLO/Template).
-        Focused function that only performs detection without OCR.
-        
-        Note: YOLO detector already includes OCR for quantity extraction internally.
-
-        Args:
-            roi_name: ROI name in FESTIVALS_ROI_CONFIG
-            screenshot: Screenshot to scan, None = take new
-            roi_image: Pre-cropped ROI image (optimization to avoid double crop)
-
-        Returns:
-            Dict[str, Any]:
-            {
-                'roi_name': str,
-                'detected': bool,
-                'detections': List[Dict],  # Each detection has: item, quantity, confidence, etc.
-                'detection_count': int
-            }
-        """
-        result = {
-            'roi_name': roi_name,
-            'detected': False,
-            'detections': [],
-            'detection_count': 0
-        }
+        """Detect objects in ROI using detector (YOLO/Template)."""
+        result = {'roi_name': roi_name, 'detected': False, 'detections': [], 'detection_count': 0}
 
         try:
             if self.detector is None:
-                logger.warning(f"Detector not available for ROI '{roi_name}'")
                 return result
 
-            # Use pre-cropped ROI if provided, otherwise crop from screenshot
             if roi_image is None:
-                # Get screenshot using helper
                 screenshot = self.get_screenshot(screenshot)
                 if screenshot is None:
                     return result
-
-                # Crop ROI using helper
                 roi_image = self.crop_roi(screenshot, roi_name)
                 if roi_image is None:
                     return result
 
-            # Detect objects in ROI
             detections = self.detector.detect(roi_image)
             result['detections'] = detections
             result['detection_count'] = len(detections)
             result['detected'] = len(detections) > 0
-
-            # Log detection results
-            if detections:
-                logger.debug(f"ROI '{roi_name}' detected {len(detections)} objects:")
-                for det in detections:
-                    item_name = det.get('item', 'unknown')
-                    quantity = det.get('quantity', 0)
-                    confidence = det.get('confidence', 0)
-                    logger.debug(f"  - {item_name} x{quantity} (conf: {confidence:.2f})")
-
-            logger.info(f"✓ ROI '{roi_name}': detected={result['detected']} ({result['detection_count']} objects)")
+            
+            logger.info(f"✓ ROI '{roi_name}': {len(detections)} objects detected")
             return result
 
         except Exception as e:
@@ -199,44 +131,19 @@ class FestivalAutomation(BaseAutomation):
 
     def scan_rois_detector(self, screenshot: Optional[Any] = None,
                           roi_names: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
-        """
-        Scan multiple ROIs using detector.
-        Simplified version focused only on detection.
-
-        Args:
-            screenshot: Screenshot to scan, None = take new
-            roi_names: List of ROI names to scan, None = scan all
-
-        Returns:
-            Dict[str, Dict[str, Any]]: Detection results for each ROI
-            {
-                'roi_name': {
-                    'detected': bool,
-                    'detections': List[Dict],
-                    'detection_count': int
-                }
-            }
-        """
+        """Scan multiple ROIs using detector."""
         try:
             if self.detector is None:
-                logger.error("Detector not available")
                 return {}
 
-            # Get screenshot using helper
             screenshot = self.get_screenshot(screenshot)
             if screenshot is None:
                 return {}
 
-            # Determine ROI list to scan
             if roi_names is None:
                 roi_names = list(FESTIVALS_ROI_CONFIG.keys())
 
-            # Scan each ROI with detector
-            results = {}
-            for roi_name in roi_names:
-                result = self.detect_roi(roi_name, screenshot)
-                results[roi_name] = result
-
+            results = {roi_name: self.detect_roi(roi_name, screenshot) for roi_name in roi_names}
             logger.info(f"Scanned {len(results)} ROIs with detector")
             return results
 
@@ -246,41 +153,17 @@ class FestivalAutomation(BaseAutomation):
 
     def scan_rois_combined(self, screenshot: Optional[Any] = None,
                           roi_names: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
-        """
-        Scan multiple ROIs with both OCR and detector.
-        Combines OCR text with detection results for comprehensive verification.
-        
-        Optimized: Crops each ROI only ONCE and uses for both OCR and detection.
-
-        Args:
-            screenshot: Screenshot to scan, None = take new
-            roi_names: List of ROI names to scan, None = scan all
-
-        Returns:
-            Dict[str, Dict[str, Any]]: Combined results for each ROI
-            {
-                'roi_name': {
-                    'text': str,           # From OCR
-                    'detected': bool,      # From detector
-                    'detections': List[Dict],
-                    'detection_count': int
-                }
-            }
-        """
+        """Scan multiple ROIs with both OCR and detector (optimized: crop once per ROI)."""
         try:
-            # Get screenshot using helper
             screenshot = self.get_screenshot(screenshot)
             if screenshot is None:
                 return {}
 
-            # Determine ROI list to scan
             if roi_names is None:
                 roi_names = list(FESTIVALS_ROI_CONFIG.keys())
 
-            # Scan each ROI - OPTIMIZED: crop only once per ROI
             results = {}
             for roi_name in roi_names:
-                # Crop ROI once using helper (from base.py)
                 roi_image = self.crop_roi(screenshot, roi_name)
                 if roi_image is None:
                     results[roi_name] = {
@@ -292,22 +175,15 @@ class FestivalAutomation(BaseAutomation):
                     }
                     continue
 
-                # Get ROI config for OCR
-                roi_config = self.get_roi_config(roi_name)
-                if roi_config is None:
-                    continue
-
-                # OCR for text - use roi_image directly
                 text = ''
                 if self.agent.ocr_engine is not None:
                     try:
                         ocr_result = self.agent.ocr_engine.recognize(roi_image)
                         if ocr_result:
                             text = self._clean_ocr_text(ocr_result.get('text', ''))
-                    except Exception as e:
-                        logger.debug(f"OCR failed for '{roi_name}': {e}")
+                    except Exception:
+                        pass
                 
-                # Detection - pass pre-cropped roi_image to avoid double crop
                 if self.detector is not None:
                     detection_result = self.detect_roi(roi_name, roi_image=roi_image)
                     results[roi_name] = {
@@ -326,47 +202,25 @@ class FestivalAutomation(BaseAutomation):
                         'detection_count': 0
                     }
 
-            logger.info(f"Scanned {len(results)} ROIs (combined OCR + detector, optimized)")
+            logger.info(f"Scanned {len(results)} ROIs (OCR + detector)")
             return results
 
         except Exception as e:
             logger.error(f"✗ Scan ROIs combined: {e}")
             return {}
 
-    def compare_results(self, extracted_data: Dict[str, Any],
-                       expected_data: Dict[str, Any],
+    def compare_results(self, extracted_data: Dict[str, Any], expected_data: Dict[str, Any],
                        return_details: bool = True) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
-        """
-        Compare OCR/Detector data with expected CSV data using OCRTextProcessor.
-        Supports both simple OCR format (Dict[str, str]) and combined format (Dict[str, Dict]).
-
-        Args:
-            extracted_data: Data from OCR or Detector
-                - Simple format: Dict[str, str] from scan_screen_roi()
-                - Combined format: Dict[str, Dict] from scan_rois_combined()
-            expected_data: Expected data from CSV
-            return_details: Return detailed results (default: True)
-
-        Returns:
-            Tuple[bool, str, Optional[Dict]]: (is_match, message, detailed_results)
-                - is_match: True if match, False if not
-                - message: Summary message
-                - detailed_results: Field details with extracted values (None if return_details=False)
-        """
+        """Compare OCR/Detector data with expected CSV data using OCRTextProcessor."""
         if not expected_data:
-            return True, "No expected data", None if not return_details else {}
+            return True, "No expected data", {} if return_details else None
 
-        # Filter fields in FESTIVALS_ROI_CONFIG (ignore meta fields)
         roi_fields = set(FESTIVALS_ROI_CONFIG.keys())
-        comparable_fields = {k: v for k, v in expected_data.items()
-                           if k in roi_fields and v}  # Only compare fields with values
-
+        comparable_fields = {k: v for k, v in expected_data.items() if k in roi_fields and v}
         if not comparable_fields:
-            return True, "No comparable fields", None if not return_details else {}
+            return True, "No comparable fields", {} if return_details else None
 
-        matches = 0
-        mismatches = []
-        detailed_results: Dict[str, Any] = {}
+        matches, mismatches, detailed_results = 0, [], {}
 
         for field, expected_value in comparable_fields.items():
             if field not in extracted_data:
@@ -375,35 +229,20 @@ class FestivalAutomation(BaseAutomation):
                     detailed_results[field] = {'status': 'missing', 'expected': expected_value}
                 continue
 
-            # Handle both simple OCR format (str) and combined format (dict)
             field_data = extracted_data[field]
             if isinstance(field_data, dict):
-                # Combined format: extract details
                 extracted_text = field_data.get('text', '').strip()
-                detected = field_data.get('detected', False)
-                detection_count = field_data.get('detection_count', 0)
+                detected, detection_count = field_data.get('detected', False), field_data.get('detection_count', 0)
                 detections = field_data.get('detections', [])
-                
-                # Extract quantity from first detection if available
-                has_quantity = False
-                quantity = 0
-                if detections and len(detections) > 0:
-                    first_detection = detections[0]
-                    quantity = first_detection.get('quantity', 0)
-                    has_quantity = quantity > 0
+                quantity = detections[0].get('quantity', 0) if detections else 0
+                has_quantity = quantity > 0
             else:
-                # Simple OCR format: just text
                 extracted_text = str(field_data).strip()
-                detected = False
-                detection_count = 0
-                has_quantity = False
-                quantity = 0
+                detected, detection_count, has_quantity, quantity = False, 0, False, 0
 
-            # Use OCRTextProcessor for field-specific validation and extraction (returns dataclass)
             validation_result = OCRTextProcessor.validate_field(field, extracted_text, expected_value)
             text_match = validation_result.status == 'match'
             
-            # Store detailed results if requested
             if return_details:
                 detailed_results[field] = {
                     'status': validation_result.status,
@@ -420,220 +259,361 @@ class FestivalAutomation(BaseAutomation):
             
             if text_match:
                 matches += 1
-                logger.debug(f"✓ {field}: {validation_result.message}")
             else:
-                mismatch_msg = f"{field}:{validation_result.extracted}≠{validation_result.expected}"
-                mismatches.append(mismatch_msg)
-                logger.debug(f"✗ {field}: {validation_result.message}")
+                mismatches.append(f"{field}:{validation_result.extracted}≠{validation_result.expected}")
 
         total = len(comparable_fields)
         is_ok = matches == total
-
-        if is_ok:
-            message = f"✓ {matches}/{total} matched"
-        else:
-            message = f"✗ {matches}/{total} matched ({', '.join(mismatches[:3])})"
-
+        message = f"✓ {matches}/{total} matched" if is_ok else f"✗ {matches}/{total} matched ({', '.join(mismatches[:3])})"
         return is_ok, message, detailed_results if return_details else None
 
     def run_festival_stage(self, stage_data: Dict[str, Any], stage_idx: int,
                           use_detector: bool = False) -> bool:
-        """
-        Run automation for 1 stage following flow 1-16.
-        Each step will retry until success before moving to next step.
-
-        Args:
-            stage_data: Stage data from CSV/JSON
-            stage_idx: Stage index
-            use_detector: Use detector (YOLO/Template)
-
-        Returns:
-            bool: True if pass, False if fail
-        """
-        logger.info(f"\n{'='*60}\nSTAGE {stage_idx}: {stage_data.get('フェス名', 'Unknown')}\n{'='*60}")
-
+        """Run automation for 1 stage with OCR verification and optional detector."""
+        stage_name = stage_data.get('フェス名', 'Unknown')
         rank = stage_data.get('推奨ランク', 'Unknown')
         folder_name = f"rank_{rank}_stage_{stage_idx}"
         stage_text = stage_data.get('フェス名', '')
         rank_text = stage_data.get('フェスランク', '')
+        
         max_retries = self.config.get('max_step_retries', 5)
         retry_delay = self.config.get('retry_delay', 1.0)
-        festivals_rois = FESTIVAL_CONFIG.get('festivals_rois', ['フェス名', 'フェスランク'])
-
+        
+        start_time = time.time()
+        stage_info = f"Rank: {rank} | Stage Text: {stage_text} | Rank Text: {rank_text}"
+        self.structured_logger.stage_start(stage_idx, stage_name, stage_info)
+        
+        screenshot_after, screenshot_result, is_ok_before, is_ok_after = None, None, False, False
+        
         try:
-            # Step 1: Touch Festival (with retry)
-            logger.info("Step 1: Touch Festival")
-            if not self.retry_with_cancellation(lambda: self.touch_template("tpl_festival.png"), max_retries, retry_delay, "Step 1: Touch Festival"):
-                return False
-            logger.info("✓ Step 1: Successfully touched festival button")
-            # Wait for festival menu to load
-            sleep(0.5)
-
-            # Step 2: Touch Event (with retry)
-            logger.info("Step 2: Touch Event")
-            if not self.retry_with_cancellation(lambda: self.touch_template("tpl_event.png"), max_retries, retry_delay, "Step 2: Touch Event"):
-                return False
-            logger.info("✓ Step 2: Successfully touched event button")
-            # Wait for event screen to load
-            sleep(0.5)
-
-            # Step 3: Snapshot before touch (with retry)
-            logger.info("Step 3: Snapshot before touch")
-            screenshot_before = self.retry_with_cancellation(lambda: self.snapshot_and_save(folder_name, "01_before_touch.png"), max_retries, retry_delay, "Step 3: Snapshot before touch")
-            if screenshot_before is None:
-                return False
-            logger.info("✓ Step 3: Successfully captured before touch snapshot")
-
-            # Step 4: Find and touch stage name in フェス名 ROI
-            logger.info(f"Step 4: Find & touch '{stage_text}' in ROI 'フェス名'")
-            if not stage_text:
-                logger.error("Step 4: No stage text (フェス名) provided")
-                return False
-            if not self.retry_with_cancellation(
-                lambda: self.find_and_touch_in_roi('フェス名', stage_text), 
-                max_retries, retry_delay, 
-                f"Step 4: Find & touch '{stage_text}' in ROI 'フェス名'"
-            ):
-                return False
-            logger.info(f"✓ Step 4: Successfully found and touched '{stage_text}'")
-            # Wait for screen transition after touch
-            sleep(0.5)
+            # ==================== NAVIGATION STEPS ====================
             
-            # Step 4.5: Find and touch rank in フェスランク ROI
-            logger.info(f"Step 4.5: Find & touch '{rank_text}' in ROI 'フェスランク'")
+            # Step 1: Touch Festival Button
+            step1 = ExecutionStep(
+                step_num=1,
+                name="Touch Festival Button",
+                action=lambda: self.touch_template("tpl_festival.png"),
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0.5,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step1.execute() != StepResult.SUCCESS:
+                return False
+            
+            # Step 2: Touch Event Button
+            step2 = ExecutionStep(
+                step_num=2,
+                name="Touch Event Button",
+                action=lambda: self.touch_template("tpl_event.png"),
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0.5,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step2.execute() != StepResult.SUCCESS:
+                return False
+            
+            # Step 3: Snapshot Before Touch
+            step3 = ExecutionStep(
+                step_num=3,
+                name="Snapshot Before Touch",
+                action=lambda: self.snapshot_and_save(folder_name, "01_before_touch.png"),
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step3.execute() != StepResult.SUCCESS:
+                return False
+            
+            # Step 4: Find and Touch Stage Name
+            if not stage_text:
+                self.structured_logger.error(f"Step 4: No stage text (フェス名) provided")
+                return False
+            
+            step4 = ExecutionStep(
+                step_num=4,
+                name=f"Find & Touch Stage Name '{stage_text}'",
+                action=lambda: self.find_and_touch_in_roi(
+                    'フェス名', stage_text, 
+                    threshold=self.fuzzy_threshold,
+                    use_fuzzy=self.use_fuzzy_matching
+                ),
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0.5,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step4.execute() != StepResult.SUCCESS:
+                return False
+            
+            # Step 5: Find and Touch Rank
             if not rank_text:
-                logger.error("Step 4.5: No rank text (フェスランク) provided")
+                self.structured_logger.error(f"Step 5: No rank text (フェスランク) provided")
                 return False
-            if not self.retry_with_cancellation(
-                lambda: self.find_and_touch_in_roi('フェスランク', rank_text), 
-                max_retries, retry_delay,
-                f"Step 4.5: Find & touch '{rank_text}' in ROI 'フェスランク'"
-            ):
+            
+            step5 = ExecutionStep(
+                step_num=5,
+                name=f"Find & Touch Rank '{rank_text}'",
+                action=lambda: self.find_and_touch_in_roi(
+                    'フェスランク', rank_text,
+                    threshold=self.fuzzy_threshold,
+                    use_fuzzy=self.use_fuzzy_matching
+                ),
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0.5,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step5.execute() != StepResult.SUCCESS:
                 return False
-            logger.info(f"✓ Step 4.5: Successfully found and touched '{rank_text}'")
-            # Wait for screen transition after touch
-            sleep(0.5)
-
-            # Step 5: Snapshot after touch (with retry)
-            logger.info("Step 5: Snapshot after touch")
-            screenshot_after = self.retry_with_cancellation(lambda: self.snapshot_and_save(folder_name, "02_after_touch.png"), max_retries, retry_delay, "Step 5: Snapshot after touch")
-            if screenshot_after is None:
+            
+            # Step 6: Snapshot After Touch
+            def capture_after_touch():
+                nonlocal screenshot_after
+                screenshot_after = self.snapshot_and_save(folder_name, "02_after_touch.png")
+                return screenshot_after is not None
+            
+            step6 = ExecutionStep(
+                step_num=6,
+                name="Snapshot After Touch",
+                action=capture_after_touch,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step6.execute() != StepResult.SUCCESS:
                 return False
-            logger.info("✓ Step 5: Successfully captured after touch snapshot")
-
-            # Step 6: ROI scan & compare (Pre-battle verification with retry)
-            logger.info("Step 6: ROI scan & compare (Pre-battle)")
-            pre_battle_rois = FESTIVAL_CONFIG.get('pre_battle_rois', ['勝利点数', '推奨ランク', 'Sランクボーダー', '初回クリア報酬', 'Sランク報酬'])
-            retry_count = 0
-            is_ok_before = False
-            while retry_count < max_retries:
-                self.check_cancelled("Step 6: Pre-battle verification")
+            
+            # ==================== PRE-BATTLE VERIFICATION ====================
+            
+            # Step 7: Pre-Battle Verification
+            self.structured_logger.subsection_header("PRE-BATTLE VERIFICATION")
+            pre_battle_rois = FESTIVAL_CONFIG.get('pre_battle_rois', 
+                ['勝利点数', '推奨ランク', 'Sランクボーダー', '初回クリア報酬', 'Sランク報酬'])
+            
+            def verify_pre_battle():
+                nonlocal is_ok_before, screenshot_after
+                self.check_cancelled("Pre-battle verification")
+                
                 if use_detector and self.detector is not None:
                     extracted = self.scan_rois_combined(screenshot_after, pre_battle_rois)
                     is_ok_before, msg, _ = self.compare_results(extracted, stage_data)
-                    logger.info(f"Pre-battle verification (with detector): {msg}")
+                    self.structured_logger.info(f"Verification (with detector): {msg}")
                 else:
                     extracted = self.scan_screen_roi(screenshot_after, pre_battle_rois)
                     is_ok_before, msg, _ = self.compare_results(extracted, stage_data, return_details=False)
-                    logger.info(f"Pre-battle verification: {msg}")
-                if is_ok_before:
-                    logger.info("✓ Step 6: Pre-battle verification passed")
-                    break
-                retry_count += 1
-                if retry_count < max_retries:
-                    logger.warning(f"Step 6: Verification attempt {retry_count}/{max_retries} failed, retaking screenshot...")
-                    screenshot_after = self.snapshot_and_save(folder_name, f"02_after_touch_retry{retry_count}.png")
-                    sleep(retry_delay)
-            else:
-                logger.error(f"Step 6: Pre-battle verification failed after {max_retries} attempts")
+                    self.structured_logger.info(f"Verification: {msg}")
+                
+                if not is_ok_before:
+                    # Retake screenshot for next attempt
+                    screenshot_after = self.snapshot_and_save(folder_name, f"02_after_touch_retry.png")
+                
+                return is_ok_before
+            
+            step7 = ExecutionStep(
+                step_num=7,
+                name="Pre-Battle Verification",
+                action=verify_pre_battle,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step7.execute() != StepResult.SUCCESS:
                 return False
-
-            # Step 7: Touch Challenge (with retry)
-            logger.info("Step 7: Touch Challenge")
-            if not self.retry_with_cancellation(lambda: self.touch_template("tpl_challenge.png"), max_retries, retry_delay, "Step 7: Touch Challenge"):
+            
+            # ==================== BATTLE EXECUTION ====================
+            
+            self.structured_logger.subsection_header("BATTLE EXECUTION")
+            
+            # Step 8: Touch Challenge Button
+            step8 = ExecutionStep(
+                step_num=8,
+                name="Touch Challenge Button",
+                action=lambda: self.touch_template("tpl_challenge.png"),
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=2,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step8.execute() != StepResult.SUCCESS:
                 return False
-            logger.info("✓ Step 7: Successfully touched challenge button")
-            sleep(0.5)
-
-            # Step 8: Touch OK (confirmation dialog - retry until found or max attempts)
-            logger.info("Step 8: Touch OK (confirmation)")
-            self.retry_with_cancellation(lambda: self.touch_template("tpl_ok.png", optional=True), max_retries, 0.3, "Step 8: Touch OK (confirmation)")
-            sleep(0.5)
-
-            # Step 9: Touch All Skip (with retry)
-            logger.info("Step 9: Touch All Skip")
-            if not self.retry_with_cancellation(lambda: self.touch_template("tpl_allskip.png"), max_retries, retry_delay, "Step 9: Touch All Skip"):
+            
+            # Step 9: Touch OK (Confirmation Dialog) - Optional
+            step9 = ExecutionStep(
+                step_num=9,
+                name="Touch OK (Confirmation)",
+                action=lambda: self.touch_template("tpl_ok.png", optional=True),
+                max_retries=max_retries,
+                retry_delay=0.3,
+                optional=True,
+                post_delay=0.5,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            step9.execute()  # Optional, don't check result
+            
+            # Step 10: Touch All Skip Button
+            step10 = ExecutionStep(
+                step_num=10,
+                name="Touch All Skip Button",
+                action=lambda: self.touch_template("tpl_allskip.png"),
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0.5,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step10.execute() != StepResult.SUCCESS:
                 return False
-            logger.info("✓ Step 9: Successfully touched all skip button")
-            sleep(0.5)
-
-            # Step 10: Touch OK (after skip - retry until found)
-            logger.info("Step 10: Touch OK (after skip)")
-            self.retry_with_cancellation(lambda: self.touch_template("tpl_ok.png", optional=True), max_retries, 0.3, "Step 10: Touch OK (after skip)")
-            # Wait for battle to complete
-            logger.info("Waiting for battle completion...")
-            sleep(2.0)
-
-            # Step 11: Touch Result (with retry)
-            logger.info("Step 11: Touch Result")
-            if not self.retry_with_cancellation(lambda: self.touch_template("tpl_result.png"), max_retries, retry_delay, "Step 11: Touch Result"):
+            
+            # Step 11: Touch OK (After Skip) - Optional
+            step11 = ExecutionStep(
+                step_num=11,
+                name="Touch OK (After Skip)",
+                action=lambda: self.touch_template("tpl_ok.png", optional=True),
+                max_retries=max_retries,
+                retry_delay=0.3,
+                optional=True,
+                post_delay=2.0,  # Wait for battle to complete
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            step11.execute()  # Optional, don't check result
+            
+            self.structured_logger.info("Waiting for battle completion...")
+            
+            # Step 12: Touch Result Button
+            step12 = ExecutionStep(
+                step_num=12,
+                name="Touch Result Button",
+                action=lambda: self.touch_template("tpl_result.png"),
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0.5,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step12.execute() != StepResult.SUCCESS:
                 return False
-            logger.info("✓ Step 11: Successfully touched result button")
-            sleep(0.5)
-
-            # Step 12: Snapshot result (with retry)
-            logger.info("Step 12: Snapshot result")
-            screenshot_result = self.retry_with_cancellation(lambda: self.snapshot_and_save(folder_name, "03_result.png"), max_retries, retry_delay, "Step 12: Snapshot result")
-            if screenshot_result is None:
+            
+            # Step 13: Snapshot Result
+            def capture_result():
+                nonlocal screenshot_result
+                screenshot_result = self.snapshot_and_save(folder_name, "03_result.png")
+                return screenshot_result is not None
+            
+            step13 = ExecutionStep(
+                step_num=13,
+                name="Snapshot Result",
+                action=capture_result,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step13.execute() != StepResult.SUCCESS:
                 return False
-            logger.info("✓ Step 12: Successfully captured result snapshot")
-
-            # Step 13: ROI scan & compare (Post-battle with retry)
-            logger.info("Step 13: ROI scan & compare (Post-battle)")
-            post_battle_rois = FESTIVAL_CONFIG.get('post_battle_rois', ['獲得ザックマネー', '獲得アイテム', '獲得EXP-Ace', '獲得EXP-NonAce', 'エース', '非エース'])
-            retry_count = 0
-            is_ok_after = False
-            while retry_count < max_retries:
-                self.check_cancelled("Step 13: Post-battle verification")
+            
+            # ==================== POST-BATTLE VERIFICATION ====================
+            
+            self.structured_logger.subsection_header("POST-BATTLE VERIFICATION")
+            
+            # Step 14: Post-Battle Verification
+            post_battle_rois = FESTIVAL_CONFIG.get('post_battle_rois',
+                ['獲得ザックマネー', '獲得アイテム', '獲得EXP-Ace', '獲得EXP-NonAce', 'エース', '非エース'])
+            
+            def verify_post_battle():
+                nonlocal is_ok_after, screenshot_result
+                self.check_cancelled("Post-battle verification")
+                
                 if use_detector and self.detector is not None:
                     extracted = self.scan_rois_combined(screenshot_result, post_battle_rois)
                     is_ok_after, msg, _ = self.compare_results(extracted, stage_data)
-                    logger.info(f"Post-battle check (with detector): {msg}")
+                    self.structured_logger.info(f"Verification (with detector): {msg}")
                 else:
                     extracted = self.scan_screen_roi(screenshot_result, post_battle_rois)
                     is_ok_after, msg, _ = self.compare_results(extracted, stage_data, return_details=False)
-                    logger.info(f"Post-battle check: {msg}")
-                if is_ok_after:
-                    logger.info("✓ Step 13: Post-battle verification passed")
-                    break
-                retry_count += 1
-                if retry_count < max_retries:
-                    logger.warning(f"Step 13: Verification attempt {retry_count}/{max_retries} failed, retaking screenshot...")
-                    screenshot_result = self.snapshot_and_save(folder_name, f"03_result_retry{retry_count}.png")
-                    sleep(retry_delay)
-            else:
-                logger.error(f"Step 13: Post-battle verification failed after {max_retries} attempts")
+                    self.structured_logger.info(f"Verification: {msg}")
+                
+                if not is_ok_after:
+                    # Retake screenshot for next attempt
+                    screenshot_result = self.snapshot_and_save(folder_name, f"03_result_retry.png")
+                
+                return is_ok_after
+            
+            step14 = ExecutionStep(
+                step_num=14,
+                name="Post-Battle Verification",
+                action=verify_post_battle,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step14.execute() != StepResult.SUCCESS:
                 return False
-
-            # Step 14: Touch OK to close result (first OK)
-            logger.info("Step 14: Touch OK (close result - first)")
-            self.touch_template("tpl_ok.png", optional=True)
-            sleep(0.3)
-
-            # Step 15: Touch OK to close result (second OK if needed)
-            logger.info("Step 15: Touch OK (close result - second)")
-            self.touch_template("tpl_ok.png", optional=True)
-            sleep(0.3)
-
+            
+            # ==================== CLEANUP ====================
+            
+            self.structured_logger.subsection_header("CLEANUP")
+            
+            # Step 15: Touch OK to Close Result (First)
+            step15 = ExecutionStep(
+                step_num=15,
+                name="Touch OK (Close Result - First)",
+                action=lambda: self.touch_template("tpl_ok.png", optional=True),
+                max_retries=1,
+                retry_delay=0.3,
+                optional=True,
+                post_delay=0.3,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            step15.execute()  # Optional, don't check result
+            
+            # Step 16: Touch OK to Close Result (Second)
+            step16 = ExecutionStep(
+                step_num=16,
+                name="Touch OK (Close Result - Second)",
+                action=lambda: self.touch_template("tpl_ok.png", optional=True),
+                max_retries=1,
+                retry_delay=0.3,
+                optional=True,
+                post_delay=0.3,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            step16.execute()  # Optional, don't check result
+            
+            # ==================== FINAL RESULT ====================
+            
             final = is_ok_before and is_ok_after
-            logger.info(f"{'='*60}\n{'✓ OK' if final else '✗ NG'}: Stage {stage_idx}\n{'='*60}")
+            duration = time.time() - start_time
+            self.structured_logger.stage_end(stage_idx, final, duration)
+            
             return final
 
         except CancellationError:
-            logger.info(f"Stage {stage_idx} cancelled")
+            self.structured_logger.warning(f"Stage {stage_idx} cancelled by user")
             return False
         except Exception as e:
-            logger.error(f"✗ Stage {stage_idx}: {e}")
+            self.structured_logger.error(f"Stage {stage_idx} failed with exception: {e}")
+            import traceback
+            self.structured_logger.error(traceback.format_exc())
             return False
 
     def run_all_stages(self, data_path: str, output_path: Optional[str] = None,
@@ -652,10 +632,13 @@ class FestivalAutomation(BaseAutomation):
         """
         # Initialize result_writer early to ensure it's available for error handling
         result_writer = None
+        start_time = time.time()
+        
         try:
             # Load data
             stages_data = load_data(data_path)
             if not stages_data:
+                self.structured_logger.error(f"Failed to load data from {data_path}")
                 return False
 
             # Setup output
@@ -667,22 +650,47 @@ class FestivalAutomation(BaseAutomation):
             # Initialize ResultWriter with auto-write and resume support
             result_writer = ResultWriter(output_path, auto_write=True, resume=resume)
 
-            # Log mode
+            # Log automation start with configuration
             mode = "Detector + OCR" if use_detector and self.detector else "OCR only"
-            logger.info(f"Mode: {mode} | Stages: {len(stages_data)} | Output: {output_path}")
+            config_info = {
+                "Mode": mode,
+                "Total Stages": len(stages_data),
+                "Output Path": output_path,
+                "Data Source": data_path,
+                "Resume Enabled": resume,
+                "Max Retries": self.config.get('max_step_retries', 5)
+            }
             
             if resume and result_writer.completed_test_ids:
-                logger.info(f"Resuming: {len(result_writer.completed_test_ids)} stages already completed")
+                config_info["Already Completed"] = len(result_writer.completed_test_ids)
+            
+            self.structured_logger.automation_start("FESTIVAL AUTOMATION", config_info)
 
             # Process each stage
+            success_count = 0
+            failed_count = 0
+            skipped_count = 0
+            
             for idx, stage_data in enumerate(stages_data, 1):
                 try:
                     self.check_cancelled(f"stage {idx}")
                 except CancellationError:
-                    logger.info(f"Cancellation requested, stopping at stage {idx}")
+                    self.structured_logger.warning(f"Cancellation requested, stopping at stage {idx}")
                     # Ensure results are saved before exiting
                     result_writer.flush()
                     result_writer.print_summary()
+                    
+                    # Log summary
+                    duration = time.time() - start_time
+                    summary = {
+                        "Total Processed": idx - 1,
+                        "Success": success_count,
+                        "Failed": failed_count,
+                        "Skipped": skipped_count,
+                        "Duration": f"{duration:.2f}s",
+                        "Status": "CANCELLED"
+                    }
+                    self.structured_logger.automation_end("FESTIVAL AUTOMATION", False, summary)
                     return False
                     
                 test_case = stage_data.copy()
@@ -690,19 +698,56 @@ class FestivalAutomation(BaseAutomation):
 
                 # Skip if already completed (resume support)
                 if resume and result_writer.is_completed(test_case):
-                    logger.info(f"Stage {idx} already completed, skipping...")
+                    self.structured_logger.info(f"Stage {idx} already completed, skipping...")
+                    skipped_count += 1
                     continue
 
+                # Run the stage
                 is_ok = self.run_festival_stage(stage_data, idx, use_detector=use_detector)
-                result_writer.add_result(test_case,
-                                       ResultWriter.RESULT_OK if is_ok else ResultWriter.RESULT_NG,
-                                       error_message=None if is_ok else "Verification failed")
-                # Results are auto-saved after each add_result
+                
+                # Track results
+                if is_ok:
+                    success_count += 1
+                else:
+                    failed_count += 1
+                
+                # Save result
+                result_writer.add_result(
+                    test_case,
+                    ResultWriter.RESULT_OK if is_ok else ResultWriter.RESULT_NG,
+                    error_message=None if is_ok else "Verification failed"
+                )
+                
+                # Progress log
+                self.structured_logger.info(f"Progress: {idx}/{len(stages_data)} stages | Success: {success_count} | Failed: {failed_count}")
+                
+                # Delay between stages
                 sleep(1.0)
 
             # Final save and summary
             result_writer.flush()
             result_writer.print_summary()
+            
+            # Log completion with detailed summary
+            duration = time.time() - start_time
+            total_processed = len(stages_data) - skipped_count
+            success_rate = (success_count / total_processed * 100) if total_processed > 0 else 0
+            
+            summary = {
+                "Total Stages": len(stages_data),
+                "Processed": total_processed,
+                "Skipped": skipped_count,
+                "Success": success_count,
+                "Failed": failed_count,
+                "Success Rate": f"{success_rate:.1f}%",
+                "Total Duration": f"{duration:.2f}s",
+                "Avg per Stage": f"{duration/total_processed:.2f}s" if total_processed > 0 else "N/A",
+                "Results File": output_path
+            }
+            
+            all_success = failed_count == 0 and total_processed > 0
+            self.structured_logger.automation_end("FESTIVAL AUTOMATION", all_success, summary)
+            
             return True
 
         except CancellationError:
@@ -710,12 +755,19 @@ class FestivalAutomation(BaseAutomation):
             if result_writer:
                 result_writer.flush()
                 result_writer.print_summary()
+            
+            self.structured_logger.warning("Automation cancelled by user")
             return False
+            
         except Exception as e:
-            logger.error(f"✗ All stages: {e}")
+            self.structured_logger.error(f"Automation failed with exception: {e}")
+            import traceback
+            self.structured_logger.error(traceback.format_exc())
+            
             # Ensure results are saved even on error
             if result_writer:
                 result_writer.flush()
+            
             return False
 
     def run(self, data_path: str, use_detector: bool = False) -> bool:
@@ -729,21 +781,19 @@ class FestivalAutomation(BaseAutomation):
         Returns:
             bool: True if successful
         """
-        logger.info("="*70 + "\nFESTIVAL AUTOMATION START\n" + "="*70)
-
         try:
             self.check_cancelled("before starting")
         except CancellationError:
+            self.structured_logger.warning("Automation cancelled before starting")
             return False
 
         if not self.agent.is_device_connected():
-            logger.error("✗ Device not connected")
+            self.structured_logger.error("✗ Device not connected")
             return False
 
         try:
             success = self.run_all_stages(data_path, use_detector=use_detector)
+            return success
         except CancellationError:
-            logger.info("Automation cancelled")
+            self.structured_logger.warning("Automation cancelled")
             return False
-        logger.info("="*70 + f"\n{'✓ COMPLETED' if success else '✗ FAILED'}\n" + "="*70)
-        return success

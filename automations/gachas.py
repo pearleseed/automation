@@ -16,10 +16,12 @@ Gacha flow:
 from typing import Dict, Optional, Any
 from datetime import datetime
 from airtest.core.api import sleep
+import time
+import os
 
-from core.base import BaseAutomation, CancellationError
+from core.base import BaseAutomation, CancellationError, ExecutionStep, StepResult
 from core.agent import Agent
-from core.utils import get_logger
+from core.utils import get_logger, StructuredLogger, ensure_directory
 from core.data import ResultWriter, load_data
 from core.config import (
     GACHA_ROI_CONFIG, get_gacha_config, merge_config
@@ -30,43 +32,31 @@ logger = get_logger(__name__)
 
 
 class GachaAutomation(BaseAutomation):
-    """Automate Gacha pulls."""
+    """Automate Gacha pulls with OCR result verification."""
 
     def __init__(self, agent: Agent, config: Optional[Dict[str, Any]] = None, cancel_event=None):
-        # Merge config: base config from GACHA_CONFIG + custom config
         base_config = get_gacha_config()
         cfg = merge_config(base_config, config) if config else base_config
-
-        # Initialize base class with agent, config, ROI config, and cancellation event
         super().__init__(agent, cfg, GACHA_ROI_CONFIG, cancel_event=cancel_event)
 
-        # Gacha-specific timing
+        self.config = cfg
         self.wait_after_pull = cfg['wait_after_pull']
-
-        # Pull settings
         self.max_pulls = cfg['max_pulls']
         self.pull_type = cfg['pull_type']
+        
+        log_dir = os.path.join(self.results_dir, "logs")
+        ensure_directory(log_dir)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = os.path.join(log_dir, f"gacha_{timestamp}.log")
+        self.structured_logger = StructuredLogger(name="GachaAutomation", log_file=log_file)
 
         logger.info("GachaAutomation initialized")
+        self.structured_logger.info(f"Log: {log_file}")
 
     def process_gacha_result(self, scan_results: Dict[str, str]) -> Dict[str, Any]:
-        """
-        Process gacha scan results with OCR text processing.
-        
-        Args:
-            scan_results: Raw OCR scan results from ROI
-            
-        Returns:
-            Dict with processed rarity, character, and confidence info
-        """
-        result = {
-            'rarity': 'Unknown',
-            'character': 'Unknown',
-            'rarity_confidence': 0.0,
-            'character_confidence': 0.0,
-            'raw_rarity': '',
-            'raw_character': ''
-        }
+        """Process gacha scan results with OCR text processing."""
+        result = {'rarity': 'Unknown', 'character': 'Unknown', 'rarity_confidence': 0.0,
+                 'character_confidence': 0.0, 'raw_rarity': '', 'raw_character': ''}
         
         try:
             # Process rarity (normalize text)
@@ -122,22 +112,9 @@ class GachaAutomation(BaseAutomation):
 
     def validate_gacha_result(self, processed_result: Dict[str, Any],
                              expected_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        Validate gacha result against expected data (if provided).
-        
-        Args:
-            processed_result: Processed gacha result from process_gacha_result()
-            expected_data: Optional expected data for validation
-            
-        Returns:
-            Dict with validation status and details
-        """
-        validation = {
-            'status': 'pass',
-            'rarity_match': True,
-            'character_match': True,
-            'message': 'No validation data provided'
-        }
+        """Validate gacha result against expected data (if provided)."""
+        validation = {'status': 'pass', 'rarity_match': True, 'character_match': True,
+                     'message': 'No validation data provided'}
         
         if not expected_data:
             return validation
@@ -186,8 +163,6 @@ class GachaAutomation(BaseAutomation):
     def run_gacha_stage(self, pull_data: Dict[str, Any], pull_idx: int,
                       pull_type: str = "single") -> Dict[str, Any]:
         """Run gacha stage."""
-        logger.info(f"\n{'='*50}\nPULL {pull_idx}: {pull_type.upper()}\n{'='*50}")
-
         folder_name = f"gacha_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         result = {
             'pull_idx': pull_idx,
@@ -196,78 +171,183 @@ class GachaAutomation(BaseAutomation):
             'character': 'Unknown',
             'success': False
         }
+        
+        max_retries = self.config.get('max_step_retries', 3)
+        retry_delay = self.config.get('retry_delay', 1.0)
+        
+        start_time = time.time()
+        pull_info = f"Type: {pull_type.upper()}"
+        self.structured_logger.stage_start(pull_idx, f"{pull_type.upper()} PULL", pull_info)
+        
+        screenshot_result = None
 
         try:
             # Step 1: Touch Gacha
-            logger.info("Step 1: Touch Gacha")
-            if not self.touch_template("tpl_gacha.png"):
+            step1 = ExecutionStep(
+                step_num=1,
+                name="Touch Gacha Button",
+                action=lambda: self.touch_template("tpl_gacha.png"),
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0.5,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step1.execute() != StepResult.SUCCESS:
+                result['success'] = False
                 return result
 
             # Step 2: Choose pull type
-            logger.info(f"Step 2: Choose {pull_type} pull")
             template_name = "tpl_single_pull.png" if pull_type == "single" else "tpl_multi_pull.png"
-            if not self.touch_template(template_name):
+            step2 = ExecutionStep(
+                step_num=2,
+                name=f"Choose {pull_type} pull",
+                action=lambda: self.touch_template(template_name),
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0.5,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step2.execute() != StepResult.SUCCESS:
+                result['success'] = False
                 return result
 
             # Step 3: Snapshot before pull
-            logger.info("Step 3: Snapshot before pull")
-            screenshot_before = self.snapshot_and_save(folder_name, f"{pull_idx:02d}_before.png")
-            if screenshot_before is None:
+            step3 = ExecutionStep(
+                step_num=3,
+                name="Snapshot Before Pull",
+                action=lambda: self.snapshot_and_save(folder_name, f"{pull_idx:02d}_before.png"),
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step3.execute() != StepResult.SUCCESS:
+                result['success'] = False
                 return result
 
             # Step 4: Confirm pull
-            logger.info("Step 4: Confirm pull")
-            if not self.touch_template("tpl_confirm.png"):
+            step4 = ExecutionStep(
+                step_num=4,
+                name="Confirm Pull",
+                action=lambda: self.touch_template("tpl_confirm.png"),
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0.5,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step4.execute() != StepResult.SUCCESS:
+                result['success'] = False
                 return result
 
-            # Step 5: Skip animation if exists
-            logger.info("Step 5: Skip animation")
-            self.touch_template("tpl_skip.png", optional=True)
-            sleep(0.5)  # Wait for result
+            # Step 5: Skip animation (optional)
+            step5 = ExecutionStep(
+                step_num=5,
+                name="Skip Animation",
+                action=lambda: self.touch_template("tpl_skip.png", optional=True),
+                max_retries=1,
+                retry_delay=0.3,
+                optional=True,
+                post_delay=0.5,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            step5.execute()  # Optional, don't check result
 
             # Step 6: Snapshot result
-            logger.info("Step 6: Snapshot result")
-            screenshot_result = self.snapshot_and_save(folder_name, f"{pull_idx:02d}_result.png")
-            if screenshot_result is None:
+            def capture_result():
+                nonlocal screenshot_result
+                screenshot_result = self.snapshot_and_save(folder_name, f"{pull_idx:02d}_result.png")
+                return screenshot_result is not None
+            
+            step6 = ExecutionStep(
+                step_num=6,
+                name="Snapshot Result",
+                action=capture_result,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step6.execute() != StepResult.SUCCESS:
+                result['success'] = False
                 return result
 
-            # Step 7: Scan result
-            logger.info("Step 7: Scan result")
-            scan_results = self.scan_screen_roi(screenshot_result)
-
-            # Process results with OCR text processing
-            processed_result = self.process_gacha_result(scan_results)
+            # Step 7: Scan and process result
+            self.structured_logger.subsection_header("RESULT PROCESSING")
             
-            # Validate against expected data (if provided in pull_data)
-            validation_result = self.validate_gacha_result(processed_result, pull_data)
-
-            result.update({
-                'rarity': processed_result['rarity'],
-                'character': processed_result['character'],
-                'rarity_confidence': processed_result['rarity_confidence'],
-                'character_confidence': processed_result['character_confidence'],
-                'raw_rarity': processed_result['raw_rarity'],
-                'raw_character': processed_result['raw_character'],
-                'validation': validation_result,
-                'scan_data': scan_results,
-                'success': True
-            })
-
-            logger.info(f"Pull result: {processed_result['rarity']} - {processed_result['character']} "
-                       f"(rarity conf: {processed_result['rarity_confidence']:.2f})")
+            def scan_and_process():
+                self.check_cancelled("Result scanning")
+                scan_results = self.scan_screen_roi(screenshot_result)
+                processed = self.process_gacha_result(scan_results)
+                validation = self.validate_gacha_result(processed, pull_data)
+                
+                result.update({
+                    'rarity': processed['rarity'],
+                    'character': processed['character'],
+                    'rarity_confidence': processed['rarity_confidence'],
+                    'character_confidence': processed['character_confidence'],
+                    'raw_rarity': processed['raw_rarity'],
+                    'raw_character': processed['raw_character'],
+                    'validation': validation,
+                    'scan_data': scan_results,
+                    'success': True
+                })
+                
+                self.structured_logger.info(f"Result: {processed['rarity']} - {processed['character']} "
+                                          f"(conf: {processed['rarity_confidence']:.2f})")
+                
+                if validation['status'] != 'pass' and validation['message'] != 'No validation data provided':
+                    self.structured_logger.warning(f"Validation: {validation['message']}")
+                
+                return True
             
-            if validation_result['status'] != 'pass' and validation_result['message'] != 'No validation data provided':
-                logger.warning(f"Validation: {validation_result['message']}")
+            step7 = ExecutionStep(
+                step_num=7,
+                name="Scan & Process Result",
+                action=scan_and_process,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                post_delay=0,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            if step7.execute() != StepResult.SUCCESS:
+                result['success'] = False
+                return result
 
             # Step 8: Close result
-            logger.info("Step 8: Close result")
-            self.touch_template("tpl_ok.png", optional=True)
+            self.structured_logger.subsection_header("CLEANUP")
+            step8 = ExecutionStep(
+                step_num=8,
+                name="Close Result",
+                action=lambda: self.touch_template("tpl_ok.png", optional=True),
+                max_retries=1,
+                retry_delay=0.3,
+                optional=True,
+                post_delay=0.3,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger
+            )
+            step8.execute()  # Optional, don't check result
 
-            logger.info(f"{'='*50}\n✓ COMPLETED: Pull {pull_idx}\n{'='*50}")
+            duration = time.time() - start_time
+            self.structured_logger.stage_end(pull_idx, result['success'], duration)
             return result
 
+        except CancellationError:
+            self.structured_logger.warning(f"Pull {pull_idx} cancelled by user")
+            result['success'] = False
+            return result
         except Exception as e:
-            logger.error(f"✗ Pull {pull_idx}: {e}")
+            self.structured_logger.error(f"Pull {pull_idx} failed with exception: {e}")
+            import traceback
+            self.structured_logger.error(traceback.format_exc())
+            result['success'] = False
             return result
 
     def run_all_pulls(self, data_path: Optional[str] = None, num_pulls: Optional[int] = None,
@@ -284,12 +364,15 @@ class GachaAutomation(BaseAutomation):
         Returns:
             bool: True if successful
         """
+        result_writer = None
+        start_time = time.time()
+        
         try:
             # Mode 1: Load from data file
             if data_path:
                 test_data = load_data(data_path)
                 if not test_data:
-                    logger.error("✗ No data loaded")
+                    self.structured_logger.error(f"Failed to load data from {data_path}")
                     return False
 
                 # Setup output
@@ -297,8 +380,15 @@ class GachaAutomation(BaseAutomation):
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     output_path = f"{self.results_dir}/gacha_batch_{timestamp}.csv"
 
-                result_writer = ResultWriter(output_path)
-                logger.info(f"Batch sessions: {len(test_data)} | Output: {output_path}")
+                result_writer = ResultWriter(output_path, auto_write=True, resume=True)
+                
+                config_info = {
+                    "Mode": "Batch (Data File)",
+                    "Total Sessions": len(test_data),
+                    "Output Path": output_path,
+                    "Data Source": data_path
+                }
+                self.structured_logger.automation_start("GACHA AUTOMATION", config_info)
 
                 all_success = True
 
@@ -314,7 +404,7 @@ class GachaAutomation(BaseAutomation):
                     if 'wait_after_touch' in session_data:
                         self.wait_after_touch = float(session_data['wait_after_touch'])
 
-                    logger.info(f"\n{'='*60}\nSESSION {idx}/{len(test_data)}: {session_num_pulls} {session_pull_type} pull(s)\n{'='*60}")
+                    self.structured_logger.section_header(f"SESSION {idx}/{len(test_data)}: {session_num_pulls} {session_pull_type} pull(s)")
 
                     # Run pulls for this session
                     session_start = datetime.now()
@@ -357,13 +447,23 @@ class GachaAutomation(BaseAutomation):
                         error_message=None if session_success else f"Only {successful_pulls}/{session_num_pulls} pulls succeeded"
                     )
 
-                    logger.info(f"Session {idx} completed: {successful_pulls}/{session_num_pulls} successful")
-                    logger.info(f"Rarity distribution: {rarity_counts}")
+                    self.structured_logger.info(f"Session {idx} completed: {successful_pulls}/{session_num_pulls} successful | Rarity: {rarity_counts}")
                     sleep(0.5)
 
                 # Save results
-                result_writer.write()
+                result_writer.flush()
                 result_writer.print_summary()
+                
+                # Log completion
+                duration = time.time() - start_time
+                summary = {
+                    "Total Sessions": len(test_data),
+                    "Success": "All" if all_success else "Partial",
+                    "Duration": f"{duration:.2f}s",
+                    "Results File": output_path
+                }
+                self.structured_logger.automation_end("GACHA AUTOMATION", all_success, summary)
+                
                 return all_success
 
             # Mode 2: Direct num_pulls
@@ -373,8 +473,15 @@ class GachaAutomation(BaseAutomation):
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     output_path = f"{self.results_dir}/gacha_results_{timestamp}.csv"
 
-                result_writer = ResultWriter(output_path)
-                logger.info(f"Gacha pulls: {num_pulls} {pull_type} | Output: {output_path}")
+                result_writer = ResultWriter(output_path, auto_write=True, resume=True)
+                
+                config_info = {
+                    "Mode": "Direct",
+                    "Total Pulls": num_pulls,
+                    "Pull Type": pull_type,
+                    "Output Path": output_path
+                }
+                self.structured_logger.automation_start("GACHA AUTOMATION", config_info)
 
                 all_results = []
 
@@ -402,7 +509,7 @@ class GachaAutomation(BaseAutomation):
                     sleep(0.5)
 
                 # Save results
-                result_writer.write()
+                result_writer.flush()
                 result_writer.print_summary()
 
                 # Summary statistics
@@ -412,19 +519,40 @@ class GachaAutomation(BaseAutomation):
                     rarity = r.get('rarity', 'Unknown')
                     rarity_counts[rarity] = rarity_counts.get(rarity, 0) + 1
 
-                logger.info(f"\nGacha Summary:")
-                logger.info(f"Total pulls: {num_pulls}")
-                logger.info(f"Successful: {len(successful_pulls)}")
-                logger.info(f"Rarity distribution: {rarity_counts}")
+                duration = time.time() - start_time
+                success_rate = (len(successful_pulls) / num_pulls * 100) if num_pulls > 0 else 0
+                
+                summary = {
+                    "Total Pulls": num_pulls,
+                    "Successful": len(successful_pulls),
+                    "Success Rate": f"{success_rate:.1f}%",
+                    "Rarity Distribution": str(rarity_counts),
+                    "Duration": f"{duration:.2f}s",
+                    "Results File": output_path
+                }
+                self.structured_logger.automation_end("GACHA AUTOMATION", True, summary)
 
                 return True
 
             else:
-                logger.error("✗ Either 'data_path' or 'num_pulls' must be provided")
+                self.structured_logger.error("✗ Either 'data_path' or 'num_pulls' must be provided")
                 return False
 
+        except CancellationError:
+            if result_writer:
+                result_writer.flush()
+                result_writer.print_summary()
+            self.structured_logger.warning("Automation cancelled by user")
+            return False
+            
         except Exception as e:
-            logger.error(f"✗ Run all pulls: {e}")
+            self.structured_logger.error(f"Automation failed with exception: {e}")
+            import traceback
+            self.structured_logger.error(traceback.format_exc())
+            
+            if result_writer:
+                result_writer.flush()
+            
             return False
 
     def run(self, config: Optional[Dict[str, Any]] = None, data_path: Optional[str] = None) -> bool:
@@ -449,28 +577,30 @@ class GachaAutomation(BaseAutomation):
             # Mode 2: Load from file
             gacha.run(data_path='./data/gacha_tests.csv')
         """
-        logger.info("="*60 + "\nGACHA AUTOMATION START\n" + "="*60)
-
         try:
             self.check_cancelled("before starting")
         except CancellationError:
+            self.structured_logger.warning("Automation cancelled before starting")
             return False
 
         if not self.agent.is_device_connected():
-            logger.error("✗ Device not connected")
+            self.structured_logger.error("✗ Device not connected")
             return False
 
-        # Mode 2: Load from data file
-        if data_path:
-            success = self.run_all_pulls(data_path=data_path)
-        # Mode 1: Direct config
-        elif config:
-            num_pulls = config.get('num_pulls', 1)
-            pull_type = config.get('pull_type', 'single')
-            success = self.run_all_pulls(num_pulls=num_pulls, pull_type=pull_type)
-        else:
-            logger.error("✗ Either 'config' or 'data_path' must be provided")
-            return False
+        try:
+            # Mode 2: Load from data file
+            if data_path:
+                success = self.run_all_pulls(data_path=data_path)
+            # Mode 1: Direct config
+            elif config:
+                num_pulls = config.get('num_pulls', 1)
+                pull_type = config.get('pull_type', 'single')
+                success = self.run_all_pulls(num_pulls=num_pulls, pull_type=pull_type)
+            else:
+                self.structured_logger.error("✗ Either 'config' or 'data_path' must be provided")
+                return False
 
-        logger.info("="*60 + f"\n{'✓ COMPLETED' if success else '✗ FAILED'}\n" + "="*60)
-        return success
+            return success
+        except CancellationError:
+            self.structured_logger.warning("Automation cancelled")
+            return False
