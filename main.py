@@ -13,7 +13,7 @@ from gui.tabs.festival_tab import FestivalTab
 from gui.tabs.gacha_tab import GachaTab
 from gui.tabs.hopping_tab import HoppingTab
 from gui.utils.logging_utils import OptimizedQueueHandler, OptimizedLogViewer
-from gui.utils.thread_utils import get_thread_manager, shutdown_thread_manager, BackgroundTaskRunner
+from gui.utils.thread_utils import get_thread_manager, shutdown_thread_manager
 
 logger = get_logger(__name__)
 
@@ -41,9 +41,8 @@ class AutoCPeachGUI(tk.Tk):
             messagebox.showerror("Error", f"Cannot initialize Agent:\n{str(e)}")
             self.agent = None
 
-        # Initialize thread manager and task runner
-        thread_manager = get_thread_manager()
-        self.task_runner = BackgroundTaskRunner(thread_manager)
+        # Initialize thread manager
+        self.thread_manager = get_thread_manager()
 
         # Apply modern styling
         self.setup_styles()
@@ -148,15 +147,6 @@ class AutoCPeachGUI(tk.Tk):
                                 values=["DEBUG", "INFO", "WARNING", "ERROR"], state='readonly', width=15)
         log_combo.pack(side='left', padx=5)
         ttk.Button(log_frame, text="Apply", command=self.apply_log_level, width=12).pack(side='left', padx=5, ipady=5)
-
-        theme_frame = ttk.Frame(general_frame)
-        theme_frame.pack(fill='x', pady=5)
-        ttk.Label(theme_frame, text="Theme:", font=('', 10)).pack(side='left', padx=5)
-        self.theme_var = tk.StringVar(value="Light")
-        theme_combo = ttk.Combobox(theme_frame, textvariable=self.theme_var, values=["Light", "Dark"],
-                                   state='readonly', width=15)
-        theme_combo.pack(side='left', padx=5)
-        ttk.Label(theme_frame, text="(Coming soon)", font=('', 8)).pack(side='left', padx=5)
 
         perf_frame = ttk.LabelFrame(parent, text="Performance Settings", padding=15)
         perf_frame.pack(fill='x', pady=10)
@@ -266,14 +256,6 @@ class AutoCPeachGUI(tk.Tk):
     def start_log_polling(self):
         """Start log polling."""
         self.log_viewer.start_polling()
-
-    def clear_logs(self):
-        """Clear log display."""
-        self.log_viewer.clear_logs()
-
-    def save_logs(self):
-        """Save logs to file."""
-        self.log_viewer.save_logs()
 
 
 def main():

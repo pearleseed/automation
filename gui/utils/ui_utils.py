@@ -79,11 +79,11 @@ class UIUtils:
         try:
             num = float(value)
             if min_val is not None and num < min_val:
-                logger.warning(f"Value {num} below minimum {min_val}, using default {default}")
-                return default
+                logger.warning(f"Value {num} below minimum {min_val}, using minimum value")
+                return min_val
             if max_val is not None and num > max_val:
-                logger.warning(f"Value {num} above maximum {max_val}, using default {default}")
-                return default
+                logger.warning(f"Value {num} above maximum {max_val}, using maximum value")
+                return max_val
             return num
         except (ValueError, TypeError):
             logger.warning(f"Invalid numeric value '{value}', using default {default}")
@@ -96,11 +96,11 @@ class UIUtils:
         try:
             num = int(float(value))  # Handle float strings like "1.0"
             if min_val is not None and num < min_val:
-                logger.warning(f"Value {num} below minimum {min_val}, using default {default}")
-                return default
+                logger.warning(f"Value {num} below minimum {min_val}, using minimum value")
+                return min_val
             if max_val is not None and num > max_val:
-                logger.warning(f"Value {num} above maximum {max_val}, using default {default}")
-                return default
+                logger.warning(f"Value {num} above maximum {max_val}, using maximum value")
+                return max_val
             return num
         except (ValueError, TypeError):
             logger.warning(f"Invalid integer value '{value}', using default {default}")
@@ -186,29 +186,14 @@ class UIUtils:
     @staticmethod
     def calculate_eta(processed: int, total: int, elapsed_time: float) -> str:
         """Calculate estimated time of arrival."""
-        if processed <= 0 or total <= 0:
+        if processed <= 0 or total <= 0 or processed >= total:
             return "--:--:--"
 
         try:
-            avg_time = elapsed_time / processed
-            remaining = (total - processed) * avg_time
+            remaining = elapsed_time / processed * (total - processed)
             return UIUtils.format_time(remaining)
         except (ZeroDivisionError, OverflowError):
             return "--:--:--"
-
-    @staticmethod
-    def safe_callback(callback: Callable, *args, **kwargs):
-        """Safely execute callback with error handling."""
-        try:
-            return callback(*args, **kwargs)
-        except Exception as e:
-            logger.error(f"Callback error: {e}")
-            return None
-
-    @staticmethod
-    def confirm_action(parent: tk.Widget, title: str, message: str) -> bool:
-        """Show confirmation dialog."""
-        return messagebox.askyesno(title, message, parent=parent)
 
     @staticmethod
     def show_info(parent: tk.Widget, title: str, message: str):

@@ -91,19 +91,12 @@ class FestivalTab(BaseAutomationTab):
     def _run_automation(self, file_path: str, config: Dict[str, Any]):
         """Override to handle Festival-specific automation logic."""
         try:
-            # Check for cancellation before starting
-            if self.thread_cancel_event.is_set():
-                logger.info("Festival automation cancelled before start")
-                return False
+            # Initialize automation instance if not already done
+            if not self.automation_instance:
+                self.automation_instance = self.automation_class(self.agent, config, cancel_event=self.thread_cancel_event)
+                if not self.automation_instance:
+                    raise RuntimeError("Failed to initialize Festival automation")
             
-            # Initialize FestivalAutomation with cancellation event
-            self.automation_instance = self.automation_class(self.agent, config, cancel_event=self.thread_cancel_event)
-            
-            # Verify instance was created
-            if self.automation_instance is None:
-                logger.error("Failed to create Festival automation instance")
-                return False
-
             # Get output path if specified
             output_file = self.output_file_var.get().strip()
             output_path = output_file if output_file else None
@@ -124,4 +117,4 @@ class FestivalTab(BaseAutomationTab):
             logger.error(f"Festival automation error: {e}")
             if not self.thread_cancel_event.is_set():
                 self.after(0, lambda: self._automation_finished(False, str(e)))
-            raise  # Re-raise for thread manager tracking
+            raise

@@ -115,20 +115,13 @@ class HoppingTab(BaseAutomationTab):
     def _run_automation(self, file_path: str, config: Dict[str, Any]):
         """Override to handle Hopping-specific automation logic."""
         try:
-            # Check for cancellation before starting
-            if self.thread_cancel_event.is_set():
-                logger.info("Hopping automation cancelled before start")
-                return False
+            # Initialize automation instance
+            if not self.automation_instance:
+                self.automation_instance = self.automation_class(self.agent, config, cancel_event=self.thread_cancel_event)
+                if not self.automation_instance:
+                    raise RuntimeError("Failed to initialize Hopping automation")
             
-            # Initialize HoppingAutomation with cancellation event
-            self.automation_instance = self.automation_class(self.agent, config, cancel_event=self.thread_cancel_event)
-            
-            # Verify instance was created
-            if self.automation_instance is None:
-                logger.error("Failed to create Hopping automation instance")
-                return False
-
-            # Run hopping (Hopping doesn't need file input)
+            # Run hopping
             success = self.automation_instance.run(config)
             
             # Call completion callback if not cancelled
@@ -141,7 +134,7 @@ class HoppingTab(BaseAutomationTab):
             logger.error(f"Hopping automation error: {e}")
             if not self.thread_cancel_event.is_set():
                 self.after(0, lambda: self._automation_finished(False, str(e)))
-            raise  # Re-raise for thread manager tracking
+            raise
 
     def _automation_finished(self, success: bool, error_msg: str = ""):
         """Override to add Hopping-specific result updates."""

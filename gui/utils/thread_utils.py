@@ -203,17 +203,6 @@ class ThreadManager:
         logger.info("ThreadManager shutdown complete")
 
 
-class BackgroundTaskRunner:
-    """Simplified high-level interface for running background tasks (kept for compatibility)."""
-
-    def __init__(self, thread_manager: ThreadManager):
-        self.thread_manager = thread_manager
-
-    def cancel_task(self, task_id: str) -> bool:
-        """Cancel a running task."""
-        return self.thread_manager.cancel_task(task_id)
-
-
 # Global thread manager instance
 _thread_manager = None
 

@@ -113,20 +113,13 @@ class GachaTab(BaseAutomationTab):
     def _run_automation(self, file_path: str, config: Dict[str, Any]):
         """Override to handle Gacha-specific automation logic."""
         try:
-            # Check for cancellation before starting
-            if self.thread_cancel_event.is_set():
-                logger.info("Gacha automation cancelled before start")
-                return False
+            # Initialize automation instance
+            if not self.automation_instance:
+                self.automation_instance = self.automation_class(self.agent, config, cancel_event=self.thread_cancel_event)
+                if not self.automation_instance:
+                    raise RuntimeError("Failed to initialize Gacha automation")
             
-            # Initialize GachaAutomation with cancellation event
-            self.automation_instance = self.automation_class(self.agent, config, cancel_event=self.thread_cancel_event)
-            
-            # Verify instance was created
-            if self.automation_instance is None:
-                logger.error("Failed to create Gacha automation instance")
-                return False
-
-            # Run gacha pulls (Gacha doesn't need file input)
+            # Run gacha pulls
             success = self.automation_instance.run(config)
             
             # Call completion callback if not cancelled
@@ -139,7 +132,7 @@ class GachaTab(BaseAutomationTab):
             logger.error(f"Gacha automation error: {e}")
             if not self.thread_cancel_event.is_set():
                 self.after(0, lambda: self._automation_finished(False, str(e)))
-            raise  # Re-raise for thread manager tracking
+            raise
 
     def _automation_finished(self, success: bool, error_msg: str = ""):
         """Override to add Gacha-specific result updates."""

@@ -369,11 +369,12 @@ class BaseAutomationTab(ttk.Frame):
             stats_frame = ttk.LabelFrame(left_panel, text="Statistics")
             stats_frame.pack(fill='x', padx=5, pady=5, side='bottom')
             
-            stats_text = tk.Text(stats_frame, height=8, width=25, font=('Courier', 8), wrap=tk.WORD)
+            stats_text = tk.Text(stats_frame, height=6, width=25, font=('Courier', 8), wrap=tk.WORD, state='disabled')
             stats_text.pack(fill='x', padx=5, pady=5)
             
             def update_stats():
                 """Update statistics display."""
+                stats_text.config(state='normal')
                 stats_text.delete('1.0', 'end')
                 visible_items = tree.get_children()
                 stats_text.insert('end', f"Visible: {len(visible_items)}/{len(data_list)}\n")
@@ -423,25 +424,23 @@ class BaseAutomationTab(ttk.Frame):
             
             for col in all_columns:
                 # Smart column width calculation
-                max_width = len(str(col)) * 9
                 sample_size = min(100, len(display_data))
-                for row in display_data[:sample_size]:
-                    value = str(row.get(col, ''))
-                    max_width = max(max_width, min(len(value) * 7, 300))
-                
-                max_width = min(max_width, 350)
-                max_width = max(max_width, 80)
+                header_width = len(str(col)) * 9
+                if sample_size > 0:
+                    content_width = min(350, max(len(str(row.get(col, ''))) * 7 for row in display_data[:sample_size]))
+                else:
+                    content_width = header_width
+                max_width = max(80, header_width, content_width)
                 
                 tree.column(col, width=max_width, minwidth=60, anchor='w', stretch=True)
                 tree.heading(col, text=col, anchor='w')
             
-            # Performance optimized data loading
             original_data = []
             for idx, row in enumerate(display_data, 1):
                 values = [row.get(col, '') for col in all_columns]
                 tag = 'evenrow' if idx % 2 == 0 else 'oddrow'
                 item_id = tree.insert('', 'end', text=str(idx), values=values, tags=(tag,))
-                original_data.append((item_id, idx, row, values))
+                original_data.append((item_id, row))
             
             # Search with performance optimization
             search_job = None
@@ -454,29 +453,20 @@ class BaseAutomationTab(ttk.Frame):
             def perform_search():
                 search_text = search_var.get().lower().strip()
                 
-                # Performance optimization: detach/reattach is faster than delete/insert
-                if not search_text:
-                    for item_id, idx, row, values in original_data:
-                        if not tree.exists(item_id):
-                            continue
+                for item_id, row in original_data:
+                    if not tree.exists(item_id):
+                        continue
+                    
+                    if not search_text or any(search_text in str(value).lower() for value in row.values()):
                         tree.reattach(item_id, '', 'end')
-                else:
-                    for item_id, idx, row, values in original_data:
-                        if not tree.exists(item_id):
-                            continue
-                        matches = any(search_text in str(value).lower() for value in row.values())
-                        if matches:
-                            tree.reattach(item_id, '', 'end')
-                        else:
-                            tree.detach(item_id)
+                    else:
+                        tree.detach(item_id)
                 
                 update_stats()
             
             search_var.trace('w', search_data)
             
             # Enhanced column sorting with visual indicators
-            sort_state = {}  # Track sort state per column
-            
             def sort_column(col, reverse):
                 """Sort treeview by column with visual feedback."""
                 items = [(tree.set(item, col), item) for item in tree.get_children('')]
@@ -490,16 +480,14 @@ class BaseAutomationTab(ttk.Frame):
                 for index, (val, item) in enumerate(items):
                     tree.move(item, '', index)
                 
-                # Update heading
-                tree.heading(col, text=col, 
-                           command=lambda: sort_column(col, not reverse))
+                # Update heading with sort indicator
+                arrow = " ▼" if reverse else " ▲"
+                tree.heading(col, text=col + arrow, command=lambda: sort_column(col, not reverse))
                 
-                # Clear other column headings
+                # Clear other column arrows
                 for other_col in all_columns:
                     if other_col != col:
-                        tree.heading(other_col, text=other_col)
-                
-                sort_state[col] = reverse
+                        tree.heading(other_col, text=other_col, command=lambda c=other_col: sort_column(c, False))
             
             # Add sort to each column
             for col in all_columns:
@@ -507,10 +495,7 @@ class BaseAutomationTab(ttk.Frame):
             
             # Column visibility toggle
             def toggle_column_visibility(col):
-                if column_vars[col].get():
-                    tree['displaycolumns'] = [c for c in all_columns if column_vars[c].get()]
-                else:
-                    tree['displaycolumns'] = [c for c in all_columns if column_vars[c].get()]
+                tree['displaycolumns'] = [c for c in all_columns if column_vars[c].get()]
             
             def toggle_all_columns(show):
                 for col in all_columns:
@@ -536,15 +521,12 @@ class BaseAutomationTab(ttk.Frame):
             
             # Copy functions
             def copy_selected_cell():
-                item = tree.focus()
-                if item:
-                    selection = tree.selection()
-                    if selection:
-                        item = selection[0]
-                        values = tree.item(item, 'values')
-                        if values:
-                            preview_window.clipboard_clear()
-                            preview_window.clipboard_append(str(values[0]))
+                selection = tree.selection()
+                if selection:
+                    values = tree.item(selection[0], 'values')
+                    if values:
+                        preview_window.clipboard_clear()
+                        preview_window.clipboard_append(str(values[0]))
             
             def copy_selected_row():
                 selection = tree.selection()
@@ -559,10 +541,12 @@ class BaseAutomationTab(ttk.Frame):
             
             def filter_by_value():
                 item = tree.focus()
-                if item:
+                col = tree.identify_column(tree.winfo_pointerx() - tree.winfo_rootx())
+                if item and col != '#0':
+                    col_index = int(col.replace('#', '')) - 1
                     values = tree.item(item, 'values')
-                    if values:
-                        search_var.set(str(values[0]))
+                    if values and 0 <= col_index < len(values):
+                        search_var.set(str(values[col_index]))
             
             # Double-click to copy cell
             def copy_cell_double_click(event):
@@ -630,9 +614,6 @@ class BaseAutomationTab(ttk.Frame):
             ttk.Button(button_frame, text="Column Stats", 
                       command=lambda: self._show_column_stats(data_list, all_columns), 
                       width=14).pack(side='left', padx=3)
-            ttk.Button(button_frame, text="Refresh", 
-                      command=lambda: messagebox.showinfo("Refresh", "Data refreshed!"), 
-                      width=12).pack(side='left', padx=3)
             
             ttk.Button(button_frame, text="Close", 
                       command=preview_window.destroy, 
