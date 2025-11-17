@@ -162,6 +162,64 @@ class BaseAutomation:
             logger.error(f"✗ {template_name}: {e}") if not optional else None
             return optional
 
+    def touch_template_while_exists(self, template_name: str, max_attempts: int = 5, 
+                                   delay_between_touches: float = 0.3) -> int:
+        """
+        Continuously touch a template while it exists (similar to Airtest's exists mechanism).
+        
+        Args:
+            template_name: Name of the template file
+            max_attempts: Maximum number of touches to prevent infinite loops
+            delay_between_touches: Delay between each touch attempt
+            
+        Returns:
+            Number of times the template was found and touched
+        """
+        touch_count = 0
+        try:
+            template_path = os.path.join(self.templates_path, template_name)
+            if not os.path.exists(template_path):
+                logger.debug(f"Template not found: {template_name}")
+                return 0
+
+            if self.agent.device is None:
+                logger.error("Device not connected")
+                return 0
+
+            template = Template(template_path)
+            
+            for attempt in range(max_attempts):
+                self.check_cancelled(f"touch_template_while_exists({template_name})")
+                
+                pos = exists(template)
+                
+                if not pos:
+                    # Template no longer exists
+                    break
+                
+                # Template exists, touch it
+                self.check_cancelled(f"touch_template_while_exists({template_name})")
+                self.agent.safe_touch(pos)
+                touch_count += 1
+                logger.info(f"✓ {template_name} (touch #{touch_count})")
+                
+                # Wait before checking again
+                sleep(delay_between_touches)
+            
+            if touch_count > 0:
+                logger.info(f"✓ Touched {template_name} {touch_count} time(s)")
+            else:
+                logger.debug(f"✓ {template_name} not found")
+            
+            return touch_count
+
+        except CancellationError:
+            logger.info(f"Cancelled during touch_template_while_exists({template_name})")
+            return touch_count
+        except Exception as e:
+            logger.error(f"✗ touch_template_while_exists({template_name}): {e}")
+            return touch_count
+
     def get_screenshot(self, screenshot: Optional[Any] = None) -> Optional[Any]:
         """Get screenshot (use cached or take new)."""
         if screenshot is not None:

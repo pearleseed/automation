@@ -320,7 +320,7 @@ class FestivalAutomation(BaseAutomation):
             step3 = ExecutionStep(
                 step_num=3,
                 name="Snapshot Before Touch",
-                action=lambda: self.snapshot_and_save(folder_name, "01_before_touch.png"),
+                action=lambda: self.snapshot_and_save(folder_name, "01_before_touch.png") is not None,
                 max_retries=max_retries,
                 retry_delay=retry_delay,
                 post_delay=0,
@@ -375,20 +375,15 @@ class FestivalAutomation(BaseAutomation):
                 return False
             
             # Step 6: Snapshot After Touch
-            def capture_after_touch():
+            def _capture_after():
                 nonlocal screenshot_after
-                screenshot_after = self.snapshot_and_save(folder_name, "02_after_touch.png")
-                return screenshot_after is not None
+                return (screenshot_after := self.snapshot_and_save(folder_name, "02_after_touch.png")) is not None
             
             step6 = ExecutionStep(
-                step_num=6,
-                name="Snapshot After Touch",
-                action=capture_after_touch,
-                max_retries=max_retries,
-                retry_delay=retry_delay,
-                post_delay=0,
-                cancel_checker=self.check_cancelled,
-                logger=self.structured_logger
+                step_num=6, name="Snapshot After Touch",
+                action=_capture_after,
+                max_retries=max_retries, retry_delay=retry_delay, post_delay=0,
+                cancel_checker=self.check_cancelled, logger=self.structured_logger
             )
             if step6.execute() != StepResult.SUCCESS:
                 return False
@@ -400,34 +395,24 @@ class FestivalAutomation(BaseAutomation):
             pre_battle_rois = FESTIVAL_CONFIG.get('pre_battle_rois', 
                 ['勝利点数', '推奨ランク', 'Sランクボーダー', '初回クリア報酬', 'Sランク報酬'])
             
-            def verify_pre_battle():
+            def _verify_pre():
                 nonlocal is_ok_before, screenshot_after
                 self.check_cancelled("Pre-battle verification")
-                
-                if use_detector and self.detector is not None:
-                    extracted = self.scan_rois_combined(screenshot_after, pre_battle_rois)
-                    is_ok_before, msg, _ = self.compare_results(extracted, stage_data)
-                    self.structured_logger.info(f"Verification (with detector): {msg}")
-                else:
-                    extracted = self.scan_screen_roi(screenshot_after, pre_battle_rois)
-                    is_ok_before, msg, _ = self.compare_results(extracted, stage_data, return_details=False)
-                    self.structured_logger.info(f"Verification: {msg}")
-                
+                extracted = (self.scan_rois_combined(screenshot_after, pre_battle_rois) 
+                           if use_detector and self.detector 
+                           else self.scan_screen_roi(screenshot_after, pre_battle_rois))
+                is_ok_before, msg, _ = self.compare_results(extracted, stage_data, 
+                                                            return_details=bool(use_detector and self.detector))
+                self.structured_logger.info(f"Verification{' (with detector)' if use_detector and self.detector else ''}: {msg}")
                 if not is_ok_before:
-                    # Retake screenshot for next attempt
-                    screenshot_after = self.snapshot_and_save(folder_name, f"02_after_touch_retry.png")
-                
+                    screenshot_after = self.snapshot_and_save(folder_name, "02_after_touch_retry.png")
                 return is_ok_before
             
             step7 = ExecutionStep(
-                step_num=7,
-                name="Pre-Battle Verification",
-                action=verify_pre_battle,
-                max_retries=max_retries,
-                retry_delay=retry_delay,
-                post_delay=0,
-                cancel_checker=self.check_cancelled,
-                logger=self.structured_logger
+                step_num=7, name="Pre-Battle Verification",
+                action=_verify_pre,
+                max_retries=max_retries, retry_delay=retry_delay, post_delay=0,
+                cancel_checker=self.check_cancelled, logger=self.structured_logger
             )
             if step7.execute() != StepResult.SUCCESS:
                 return False
@@ -450,7 +435,7 @@ class FestivalAutomation(BaseAutomation):
             if step8.execute() != StepResult.SUCCESS:
                 return False
             
-            # Step 9: Touch OK (Confirmation Dialog) - Optional
+            # Step 9: Touch OK (Confirmation Dialog)
             step9 = ExecutionStep(
                 step_num=9,
                 name="Touch OK (Confirmation)",
@@ -509,20 +494,15 @@ class FestivalAutomation(BaseAutomation):
                 return False
             
             # Step 13: Snapshot Result
-            def capture_result():
+            def _capture_result():
                 nonlocal screenshot_result
-                screenshot_result = self.snapshot_and_save(folder_name, "03_result.png")
-                return screenshot_result is not None
+                return (screenshot_result := self.snapshot_and_save(folder_name, "03_result.png")) is not None
             
             step13 = ExecutionStep(
-                step_num=13,
-                name="Snapshot Result",
-                action=capture_result,
-                max_retries=max_retries,
-                retry_delay=retry_delay,
-                post_delay=0,
-                cancel_checker=self.check_cancelled,
-                logger=self.structured_logger
+                step_num=13, name="Snapshot Result",
+                action=_capture_result,
+                max_retries=max_retries, retry_delay=retry_delay, post_delay=0,
+                cancel_checker=self.check_cancelled, logger=self.structured_logger
             )
             if step13.execute() != StepResult.SUCCESS:
                 return False
@@ -535,34 +515,24 @@ class FestivalAutomation(BaseAutomation):
             post_battle_rois = FESTIVAL_CONFIG.get('post_battle_rois',
                 ['獲得ザックマネー', '獲得アイテム', '獲得EXP-Ace', '獲得EXP-NonAce', 'エース', '非エース'])
             
-            def verify_post_battle():
+            def _verify_post():
                 nonlocal is_ok_after, screenshot_result
                 self.check_cancelled("Post-battle verification")
-                
-                if use_detector and self.detector is not None:
-                    extracted = self.scan_rois_combined(screenshot_result, post_battle_rois)
-                    is_ok_after, msg, _ = self.compare_results(extracted, stage_data)
-                    self.structured_logger.info(f"Verification (with detector): {msg}")
-                else:
-                    extracted = self.scan_screen_roi(screenshot_result, post_battle_rois)
-                    is_ok_after, msg, _ = self.compare_results(extracted, stage_data, return_details=False)
-                    self.structured_logger.info(f"Verification: {msg}")
-                
+                extracted = (self.scan_rois_combined(screenshot_result, post_battle_rois)
+                           if use_detector and self.detector
+                           else self.scan_screen_roi(screenshot_result, post_battle_rois))
+                is_ok_after, msg, _ = self.compare_results(extracted, stage_data,
+                                                           return_details=bool(use_detector and self.detector))
+                self.structured_logger.info(f"Verification{' (with detector)' if use_detector and self.detector else ''}: {msg}")
                 if not is_ok_after:
-                    # Retake screenshot for next attempt
-                    screenshot_result = self.snapshot_and_save(folder_name, f"03_result_retry.png")
-                
+                    screenshot_result = self.snapshot_and_save(folder_name, "03_result_retry.png")
                 return is_ok_after
             
             step14 = ExecutionStep(
-                step_num=14,
-                name="Post-Battle Verification",
-                action=verify_post_battle,
-                max_retries=max_retries,
-                retry_delay=retry_delay,
-                post_delay=0,
-                cancel_checker=self.check_cancelled,
-                logger=self.structured_logger
+                step_num=14, name="Post-Battle Verification",
+                action=_verify_post,
+                max_retries=max_retries, retry_delay=retry_delay, post_delay=0,
+                cancel_checker=self.check_cancelled, logger=self.structured_logger
             )
             if step14.execute() != StepResult.SUCCESS:
                 return False
@@ -571,11 +541,11 @@ class FestivalAutomation(BaseAutomation):
             
             self.structured_logger.subsection_header("CLEANUP")
             
-            # Step 15: Touch OK to Close Result (First)
+            # Step 15: Touch OK buttons until none remain
             step15 = ExecutionStep(
                 step_num=15,
-                name="Touch OK (Close Result - First)",
-                action=lambda: self.touch_template("tpl_ok.png", optional=True),
+                name="Touch OK (Close All Results)",
+                action=lambda: self.touch_template_while_exists("tpl_ok.png", max_attempts=10, delay_between_touches=0.3) >= 0,
                 max_retries=1,
                 retry_delay=0.3,
                 optional=True,
@@ -584,20 +554,6 @@ class FestivalAutomation(BaseAutomation):
                 logger=self.structured_logger
             )
             step15.execute()  # Optional, don't check result
-            
-            # Step 16: Touch OK to Close Result (Second)
-            step16 = ExecutionStep(
-                step_num=16,
-                name="Touch OK (Close Result - Second)",
-                action=lambda: self.touch_template("tpl_ok.png", optional=True),
-                max_retries=1,
-                retry_delay=0.3,
-                optional=True,
-                post_delay=0.3,
-                cancel_checker=self.check_cancelled,
-                logger=self.structured_logger
-            )
-            step16.execute()  # Optional, don't check result
             
             # ==================== FINAL RESULT ====================
             
@@ -693,14 +649,20 @@ class FestivalAutomation(BaseAutomation):
                     self.structured_logger.automation_end("FESTIVAL AUTOMATION", False, summary)
                     return False
                     
+                # Prepare test case with ID
                 test_case = stage_data.copy()
                 test_case['test_case_id'] = idx
 
                 # Skip if already completed (resume support)
                 if resume and result_writer.is_completed(test_case):
-                    self.structured_logger.info(f"Stage {idx} already completed, skipping...")
+                    stage_name = stage_data.get('フェス名', 'Unknown')
+                    self.structured_logger.info(f"✓ Stage {idx} ({stage_name}) already completed, skipping...")
                     skipped_count += 1
                     continue
+                
+                # Log stage execution
+                stage_name = stage_data.get('フェス名', 'Unknown')
+                self.structured_logger.info(f"▶ Executing Stage {idx}/{len(stages_data)}: {stage_name}")
 
                 # Run the stage
                 is_ok = self.run_festival_stage(stage_data, idx, use_detector=use_detector)

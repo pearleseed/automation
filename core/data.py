@@ -109,16 +109,15 @@ class ResultWriter:
         
         Args:
             output_path: Path to output CSV file
-            auto_write: Automatically write after each add_result (default: True for incremental saving)
+            auto_write: Automatically write after each add_result (default: True for incremental saving and resume support)
             resume: Load existing results if file exists (default: True for resume support)
-            batch_size: Number of results to accumulate before writing (default: 100 for memory efficiency)
+            batch_size: Reserved for future optimization (currently unused when auto_write=True)
         """
         self.output_path = output_path
         self.auto_write = auto_write
         self.batch_size = batch_size
         self.results: List[Dict[str, Any]] = []
         self.completed_test_ids: set = set()
-        self._pending_writes = 0
 
         if directory := os.path.dirname(output_path):
             ensure_directory(directory)
@@ -127,21 +126,33 @@ class ResultWriter:
         if resume and os.path.exists(output_path):
             self._load_existing_results()
         
-        logger.info(f"ResultWriter initialized: {output_path} ({len(self.results)} existing results, batch_size={batch_size})")
+        logger.info(f"ResultWriter initialized: {output_path} (auto_write={auto_write}, resume={resume}, {len(self.results)} existing results)")
 
     def _load_existing_results(self) -> None:
         """Load existing results from CSV file for resume support."""
         try:
             existing_data = load_csv(self.output_path)
+            if not existing_data:
+                logger.info("No existing results found in file")
+                return
+            
             self.results = existing_data
+            
             # Track completed test IDs
             for row in existing_data:
                 test_id = row.get('test_case_id')
                 if test_id:
                     self.completed_test_ids.add(str(test_id))
-            logger.info(f"Loaded {len(self.results)} existing results, {len(self.completed_test_ids)} completed test cases")
+            
+            # Log detailed resume information
+            completed_ids = sorted([int(id) for id in self.completed_test_ids if id.isdigit()])
+            logger.info(f"✓ Resume: Loaded {len(self.results)} existing results")
+            logger.info(f"✓ Resume: {len(self.completed_test_ids)} completed test cases: {completed_ids}")
+            
+        except FileNotFoundError:
+            logger.info("No existing results file found, starting fresh")
         except Exception as e:
-            logger.warning(f"Could not load existing results: {e}")
+            logger.warning(f"Could not load existing results: {e}, starting fresh")
 
     def is_completed(self, test_case: Dict[str, Any]) -> bool:
         """Check if a test case has already been completed."""
@@ -166,16 +177,11 @@ class ResultWriter:
         
         self.results.append(row_data)
         
-        # Batch writes for memory efficiency
+        # Incremental save when auto_write is enabled
+        # Write after EVERY add_result to ensure resume mechanism works correctly
         if self.auto_write:
-            self._pending_writes += 1
-            # Write when batch size reached, or immediately for first result
-            if self._pending_writes >= self.batch_size:
-                self.write()
-                self._pending_writes = 0
-            elif self._pending_writes == 1:
-                # Write first result immediately for responsiveness
-                self.write()
+            self.write()
+            logger.debug(f"Auto-saved result for test_case_id={test_id}")
 
     def write(self, clear_after_write: bool = False) -> bool:
         """Write all results to CSV file, optionally clear buffer after."""
