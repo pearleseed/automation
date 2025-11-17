@@ -7,7 +7,6 @@ from tkinter import ttk, filedialog, messagebox
 import os
 import threading
 import subprocess
-import platform
 from typing import List, Dict, Any, Optional
 from PIL import Image, ImageTk
 
@@ -61,7 +60,7 @@ class GachaTab(ttk.Frame):
         ttk.Button(path_frame, text="Browse", command=self._browse_templates, width=10).pack(side='left')
         
         # Banner Grid
-        banner_frame = ttk.LabelFrame(parent, text="📋 Gacha Banners", padding=10)
+        banner_frame = ttk.LabelFrame(parent, text="Gacha Banners", padding=10)
         banner_frame.pack(fill='both', expand=True, pady=5)
         
         toolbar = ttk.Frame(banner_frame)
@@ -86,15 +85,15 @@ class GachaTab(ttk.Frame):
         canvas.bind('<Configure>', lambda e: canvas.itemconfig(self.banner_canvas_window, width=e.width))
         
         # Pull Configuration
-        config_frame = ttk.LabelFrame(parent, text="⚙️ Configuration", padding=10)
+        config_frame = ttk.LabelFrame(parent, text="Configuration", padding=10)
         config_frame.pack(fill='x', pady=5)
         
         # Rarity
         r = ttk.Frame(config_frame)
         r.pack(fill='x', pady=2)
         ttk.Label(r, text="Rarity:", width=12).pack(side='left')
-        ttk.Radiobutton(r, text="SSR ★★★★★", variable=self.rarity_var, value="ssr").pack(side='left', padx=5)
-        ttk.Radiobutton(r, text="SR ★★★★", variable=self.rarity_var, value="sr").pack(side='left', padx=5)
+        ttk.Radiobutton(r, text="SSR", variable=self.rarity_var, value="ssr").pack(side='left', padx=5)
+        ttk.Radiobutton(r, text="SR", variable=self.rarity_var, value="sr").pack(side='left', padx=5)
         
         # Pulls
         p = ttk.Frame(config_frame)
@@ -107,14 +106,14 @@ class GachaTab(ttk.Frame):
         # Buttons
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill='x', pady=10)
-        self.start_btn = ttk.Button(btn_frame, text="▶ Start", command=self._start, style='Accent.TButton', width=20)
-        self.start_btn.pack(side='left', padx=5, ipady=10)
-        self.stop_btn = ttk.Button(btn_frame, text="⏹ Stop", command=self._stop, state='disabled', width=12)
-        self.stop_btn.pack(side='left', padx=5, ipady=10)
+        self.start_btn = ttk.Button(btn_frame, text=" Start Gacha", command=self._start, style='Accent.TButton', width=20)
+        self.start_btn.pack(side='left', padx=5, ipadx=15, ipady=10)
+        self.stop_btn = ttk.Button(btn_frame, text="Stop", command=self._stop, state='disabled', width=12)
+        self.stop_btn.pack(side='left', padx=5, ipadx=15, ipady=10)
 
     def _setup_selected(self, parent):
         """Setup selected gachas panel."""
-        frame = ttk.LabelFrame(parent, text="✅ Selected Gachas", padding=10)
+        frame = ttk.LabelFrame(parent, text="Selected Gachas", padding=10)
         frame.pack(fill='both', expand=True, pady=5)
         
         list_frame = ttk.Frame(frame)
@@ -148,15 +147,27 @@ class GachaTab(ttk.Frame):
         path = self.templates_path_var.get().strip()
         banners_path = os.path.join(path, 'banners')
         
-        if not os.path.exists(banners_path):
-            os.makedirs(banners_path, exist_ok=True)
-        
         for w in self.banner_grid.winfo_children():
             w.destroy()
         
+        # Check if folder exists
+        if not os.path.exists(banners_path):
+            ttk.Label(self.banner_grid, 
+                     text=f"Folder not found:\n{banners_path}\n\nPlease select a valid templates folder", 
+                     foreground='red', justify='center').pack(pady=20)
+            self.status_var.set("Folder not found")
+            return
+        
         # Find all banner folders
-        banner_folders = [d for d in os.listdir(banners_path) 
-                         if os.path.isdir(os.path.join(banners_path, d)) and not d.startswith('.')]
+        try:
+            banner_folders = [d for d in os.listdir(banners_path) 
+                             if os.path.isdir(os.path.join(banners_path, d)) and not d.startswith('.')]
+        except Exception as e:
+            ttk.Label(self.banner_grid, 
+                     text=f"Cannot access folder:\n{banners_path}\n\nError: {str(e)}", 
+                     foreground='red', justify='center').pack(pady=20)
+            self.status_var.set("Cannot access folder")
+            return
         
         if not banner_folders:
             ttk.Label(self.banner_grid, 
@@ -228,10 +239,7 @@ class GachaTab(ttk.Frame):
         if not swimsuit_files:
             if messagebox.askyesno("No Swimsuit Templates", 
                 f"No swimsuit templates found in:\n{folder_path}\n\nOpen folder to add swimsuit templates?"):
-                if platform.system() == 'Darwin':
-                    subprocess.run(['open', folder_path])
-                elif platform.system() == 'Windows':
-                    subprocess.run(['explorer', folder_path])
+                subprocess.run(['explorer', folder_path])
             return
         
         self.selected_gachas.append({

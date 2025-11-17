@@ -77,10 +77,6 @@ FESTIVALS_ROI_CONFIG: Dict[str, Dict[str, Any]] = {
 # ==================== GACHA ROI CONFIGURATION ====================
 # ROI for Gacha automation
 GACHA_ROI_CONFIG: Dict[str, Dict[str, Any]] = {
-    "rarity": {
-        "coords": [600, 800, 200, 250],
-        "description": "Character rarity area (SSR, SR, R)"
-    },
     "character": {
         "coords": [400, 900, 300, 400],
         "description": "Character name area"
