@@ -96,6 +96,10 @@ class ValidationSummary:
 class TextProcessor:
     """Unified text processing utilities - NO DUPLICATION."""
     
+    # Pre-compiled patterns for performance
+    _NUMBER_PATTERN = re.compile(r'\d+')
+    _CLEAN_PUNCTUATION = str.maketrans('', '', ',.')
+    
     @staticmethod
     @lru_cache(maxsize=1024)
     def normalize_text(text: str, remove_spaces: bool = True, 
@@ -122,8 +126,8 @@ class TextProcessor:
         if remove_spaces:
             result = result.replace(' ', '').replace('\u3000', '')
         
-        # Remove common punctuation
-        result = result.replace(',', '').replace('.', '')
+        # Remove common punctuation (optimized with translate)
+        result = result.translate(TextProcessor._CLEAN_PUNCTUATION)
         
         return result
     
@@ -168,16 +172,16 @@ class TextProcessor:
         if not text:
             return []
         
-        # Clean text
+        # Clean text (optimized)
         cleaned = text.strip()
         if clean_chars:
-            for char in clean_chars:
-                cleaned = cleaned.replace(char, '')
+            trans_table = str.maketrans('', '', ''.join(clean_chars))
+            cleaned = cleaned.translate(trans_table)
         else:
             cleaned = cleaned.replace(',', '').replace(' ', '')
         
-        # Extract numbers
-        numbers = re.findall(r'\d+', cleaned)
+        # Extract numbers (use cached pattern)
+        numbers = TextProcessor._NUMBER_PATTERN.findall(cleaned)
         try:
             return [int(n) for n in numbers]
         except ValueError:
@@ -273,127 +277,87 @@ class FieldExtractor(Protocol):
 
 class NumberExtractor:
     """Extract number from text."""
-    
     def __init__(self, position: int = 0, clean_chars: Optional[List[str]] = None):
-        self.position = position
-        self.clean_chars = clean_chars
+        self.position, self.clean_chars = position, clean_chars
     
     def extract(self, text: str) -> ExtractionResult:
-        """Extract number at position."""
         value = TextProcessor.get_number_at_position(text, self.position, self.clean_chars)
-        
-        return ExtractionResult(
-            value=value,
-            raw_text=text,
-            confidence=0.9 if value is not None else 0.0,
-            success=value is not None
-        )
+        return ExtractionResult(value, text, 0.9 if value is not None else 0.0, value is not None)
 
 
 class RankExtractor:
     """Extract rank letter from text."""
-    
-    RANK_PATTERN = r'\b(SSS+|SSS|SS|S|A|B|C|D|E|F)\b'
+    RANK_PATTERN = re.compile(r'\b(SSS+|SSS|SS|S|A|B|C|D|E|F)\b')
     
     def extract(self, text: str) -> ExtractionResult:
-        """Extract rank."""
         if not text:
             return ExtractionResult(None, text, 0.0, False)
-        
-        text_upper = text.strip().upper()
-        match = re.search(self.RANK_PATTERN, text_upper)
-        
-        if match:
-            rank = match.group(1)
-            return ExtractionResult(rank, text, 1.0, True)
-        
-        return ExtractionResult(None, text, 0.0, False)
+        match = self.RANK_PATTERN.search(text.strip().upper())
+        return ExtractionResult(match.group(1), text, 1.0, True) if match else ExtractionResult(None, text, 0.0, False)
 
 
 class MoneyExtractor:
     """Extract money/currency from text."""
+    NUMBER_PATTERN = re.compile(r'\d+')
+    CLEAN_CHARS = str.maketrans('', '', ',× xX ')
     
     def extract(self, text: str) -> ExtractionResult:
-        """Extract money (join all numbers)."""
         if not text:
             return ExtractionResult(None, text, 0.0, False)
-        
-        # Clean and join all numbers
-        cleaned = text.strip().replace(',', '').replace(' ', '')
-        cleaned = cleaned.replace('×', '').replace('x', '').replace('X', '')
-        
-        numbers = re.findall(r'\d+', cleaned)
-        if numbers:
-            try:
-                value = int(''.join(numbers))
-                return ExtractionResult(value, text, 0.9, True)
-            except ValueError:
-                pass
-        
-        return ExtractionResult(None, text, 0.0, False)
+        numbers = self.NUMBER_PATTERN.findall(text.strip().translate(self.CLEAN_CHARS))
+        try:
+            return ExtractionResult(int(''.join(numbers)), text, 0.9, True) if numbers else ExtractionResult(None, text, 0.0, False)
+        except ValueError:
+            return ExtractionResult(None, text, 0.0, False)
 
 
 class ItemQuantityExtractor:
     """Extract item name and quantity."""
-    
-    PATTERN = r'(.+?)\s*[xX×]\s*(\d+)'
+    PATTERN = re.compile(r'(.+?)\s*[xX×]\s*(\d+)')
+    FALLBACK_PATTERN = re.compile(r'\s*[xX×]?\s*\d+\s*$')
+    NUMBER_PATTERN = re.compile(r'\d+')
     
     def extract(self, text: str) -> ExtractionResult:
-        """Extract item and quantity."""
         if not text:
             return ExtractionResult((None, None), text, 0.0, False)
-        
         text = text.strip()
         
         # Try pattern match
-        match = re.search(self.PATTERN, text)
-        if match:
-            item_name = match.group(1).strip()
+        if match := self.PATTERN.search(text):
             try:
-                quantity = int(match.group(2))
-                return ExtractionResult((item_name, quantity), text, 0.9, True)
+                return ExtractionResult((match.group(1).strip(), int(match.group(2))), text, 0.9, True)
             except ValueError:
                 pass
         
-        # Fallback: try to extract numbers at end
-        numbers = re.findall(r'\d+', text)
-        if numbers:
+        # Fallback: extract numbers at end
+        if numbers := self.NUMBER_PATTERN.findall(text):
             try:
-                quantity = int(numbers[-1])
-                item_name = re.sub(r'\s*[xX×]?\s*\d+\s*$', '', text).strip()
-                return ExtractionResult((item_name, quantity), text, 0.7, True)
+                return ExtractionResult((self.FALLBACK_PATTERN.sub('', text).strip(), int(numbers[-1])), text, 0.7, True)
             except ValueError:
                 pass
         
-        # No quantity found
         return ExtractionResult((text, None), text, 0.5, True)
 
 
 class DropRangeExtractor:
     """Extract drop range (e.g., '3 ~ 4')."""
-    
-    PATTERN = r'(\d+)\s*[~～\-]\s*(\d+)'
+    PATTERN = re.compile(r'(\d+)\s*[~～\-]\s*(\d+)')
+    NUMBER_PATTERN = re.compile(r'\d+')
     
     def extract(self, text: str) -> ExtractionResult:
-        """Extract drop range."""
         if not text:
             return ExtractionResult(None, text, 0.0, False)
-        
         text = text.strip()
         
         # Try range pattern
-        match = re.search(self.PATTERN, text)
-        if match:
+        if match := self.PATTERN.search(text):
             try:
-                min_val = int(match.group(1))
-                max_val = int(match.group(2))
-                return ExtractionResult((min_val, max_val), text, 0.9, True)
+                return ExtractionResult((int(match.group(1)), int(match.group(2))), text, 0.9, True)
             except ValueError:
                 pass
         
         # Single number (range = same number)
-        numbers = re.findall(r'\d+', text)
-        if numbers:
+        if numbers := self.NUMBER_PATTERN.findall(text):
             try:
                 val = int(numbers[0])
                 return ExtractionResult((val, val), text, 0.8, True)
@@ -403,7 +367,7 @@ class DropRangeExtractor:
         return ExtractionResult(None, text, 0.0, False)
 
 
-# ==================== OCR TEXT PROCESSOR (REFACTORED) ====================
+# ==================== OCR TEXT PROCESSOR ====================
 
 class OCRTextProcessor:
     """
@@ -423,35 +387,18 @@ class OCRTextProcessor:
         '獲得EXP-NonAce': NumberExtractor(position=-1),
         'エース': NumberExtractor(position=-1),
         '非エース': NumberExtractor(position=-1),
-        'item_quantity': ItemQuantityExtractor(),
+        '獲得アイテム': ItemQuantityExtractor(),
         'drop_range': DropRangeExtractor(),
     }
     
+    # Cached extractor instances for internal use
+    _drop_range_extractor = DropRangeExtractor()
+    
     @classmethod
     def extract_field(cls, field_name: str, text: str) -> ExtractionResult:
-        """
-        Extract field value using appropriate extractor.
-        
-        Args:
-            field_name: Field name
-            text: OCR text
-            
-        Returns:
-            ExtractionResult: Extraction result
-        """
-        # Get extractor
+        """Extract field value using appropriate extractor."""
         extractor = cls.EXTRACTORS.get(field_name)
-        
-        if extractor is None:
-            # Default: return text as-is
-            return ExtractionResult(
-                value=text,
-                raw_text=text,
-                confidence=0.5,
-                success=bool(text)
-            )
-        
-        return extractor.extract(text)
+        return extractor.extract(text) if extractor else ExtractionResult(text, text, 0.5, bool(text))
     
     @staticmethod
     def validate_field(field_name: str, ocr_text: str, 
@@ -472,158 +419,44 @@ class OCRTextProcessor:
             extraction = OCRTextProcessor.extract_field(field_name, ocr_text)
             
             if not extraction.success:
-                return ValidationResult(
-                    field=field_name,
-                    status='error',
-                    extracted=None,
-                    expected=expected_value,
-                    ocr_text=ocr_text,
-                    message=f"Failed to extract: {extraction.error_message}",
-                    confidence=0.0
-                )
+                return ValidationResult(field_name, 'error', None, expected_value, ocr_text,
+                                      f"Failed to extract: {extraction.error_message}", 0.0)
             
             extracted_value = extraction.value
             
             # Validate based on field type
             if '報酬' in field_name or 'クリア' in field_name:
-                # Reward fields - use fuzzy matching
                 match = TextProcessor.fuzzy_match(ocr_text, str(expected_value))
-                return ValidationResult(
-                    field=field_name,
-                    status='match' if match else 'mismatch',
-                    extracted=ocr_text,
-                    expected=expected_value,
-                    ocr_text=ocr_text,
-                    message=f"Template match: {match}",
-                    confidence=extraction.confidence
-                )
+                return ValidationResult(field_name, 'match' if match else 'mismatch', ocr_text, 
+                                      expected_value, ocr_text, f"Template match: {match}", extraction.confidence)
             
-            elif 'コイン' in field_name or 'ドロップ' in field_name:
-                # Drop items - check range
-                drop_range = DropRangeExtractor().extract(str(expected_value))
-                if drop_range.success and isinstance(drop_range.value, tuple):
+            if 'コイン' in field_name or 'ドロップ' in field_name:
+                drop_range = OCRTextProcessor._drop_range_extractor.extract(str(expected_value))
+                if drop_range.success and isinstance(drop_range.value, tuple) and isinstance(extracted_value, int):
                     min_val, max_val = drop_range.value
-                    if isinstance(extracted_value, int):
-                        in_range = min_val <= extracted_value <= max_val
-                        return ValidationResult(
-                            field=field_name,
-                            status='match' if in_range else 'mismatch',
-                            extracted=extracted_value,
-                            expected=expected_value,
-                            ocr_text=ocr_text,
-                            message=f"Drop: {extracted_value} in range [{min_val}, {max_val}] = {in_range}",
-                            confidence=extraction.confidence
-                        )
+                    in_range = min_val <= extracted_value <= max_val
+                    return ValidationResult(field_name, 'match' if in_range else 'mismatch', extracted_value,
+                                          expected_value, ocr_text, f"Drop: {extracted_value} in range [{min_val}, {max_val}] = {in_range}",
+                                          extraction.confidence)
             
+            # Direct comparison - normalize types
+            if isinstance(extracted_value, (int, float)):
+                try:
+                    match = extracted_value == type(extracted_value)(expected_value)
+                except (ValueError, TypeError):
+                    match = str(extracted_value) == str(expected_value)
             else:
-                # Direct comparison
-                match = extracted_value == expected_value
-                return ValidationResult(
-                    field=field_name,
-                    status='match' if match else 'mismatch',
-                    extracted=extracted_value,
-                    expected=expected_value,
-                    ocr_text=ocr_text,
-                    message=f"Comparison: {extracted_value} == {expected_value} = {match}",
-                    confidence=extraction.confidence
-                )
+                match = str(extracted_value) == str(expected_value)
             
-            # Default fallback (should not reach here)
-            return ValidationResult(
-                field=field_name,
-                status='mismatch',
-                extracted=extracted_value,
-                expected=expected_value,
-                ocr_text=ocr_text,
-                message="Validation completed without specific match",
-                confidence=extraction.confidence
-            )
+            return ValidationResult(field_name, 'match' if match else 'mismatch', extracted_value,
+                                  expected_value, ocr_text, f"Comparison: {extracted_value} == {expected_value} = {match}",
+                                  extraction.confidence)
         
         except Exception as e:
-            return ValidationResult(
-                field=field_name,
-                status='error',
-                extracted=None,
-                expected=expected_value,
-                ocr_text=ocr_text,
-                message=f"Validation error: {str(e)}",
-                confidence=0.0
-            )
+            return ValidationResult(field_name, 'error', None, expected_value, ocr_text, f"Validation error: {str(e)}", 0.0)
     
-    @staticmethod
-    def validate_multiple_fields(extracted_data: Dict[str, str],
-                                expected_data: Dict[str, Any]) -> Dict[str, ValidationResult]:
-        """
-        Validate multiple fields at once.
-        
-        Args:
-            extracted_data: Dict of field_name -> ocr_text
-            expected_data: Dict of field_name -> expected_value
-            
-        Returns:
-            Dict[str, ValidationResult]: Validation results
-        """
-        results = {}
-        
-        for field_name, expected_value in expected_data.items():
-            if field_name not in extracted_data:
-                results[field_name] = ValidationResult(
-                    field=field_name,
-                    status='missing',
-                    extracted=None,
-                    expected=expected_value,
-                    ocr_text='',
-                    message='Field not found in extracted data',
-                    confidence=0.0
-                )
-            else:
-                ocr_text = extracted_data[field_name]
-                results[field_name] = OCRTextProcessor.validate_field(
-                    field_name, ocr_text, expected_value
-                )
-        
-        return results
-    
-    @staticmethod
-    def get_validation_summary(validation_results: Dict[str, ValidationResult]) -> ValidationSummary:
-        """
-        Get summary statistics from validation results.
-        
-        Args:
-            validation_results: Validation results
-            
-        Returns:
-            ValidationSummary: Summary statistics
-        """
-        total = len(validation_results)
-        matched = sum(1 for r in validation_results.values() if r.status == 'match')
-        mismatched = sum(1 for r in validation_results.values() if r.status == 'mismatch')
-        missing = sum(1 for r in validation_results.values() if r.status == 'missing')
-        errors = sum(1 for r in validation_results.values() if r.status == 'error')
-        
-        match_rate = matched / total if total > 0 else 0.0
-        status = 'pass' if matched == total else 'fail'
-        
-        return ValidationSummary(
-            total=total,
-            matched=matched,
-            mismatched=mismatched,
-            missing=missing,
-            errors=errors,
-            match_rate=match_rate,
-            status=status
-        )
-    
-    @staticmethod
-    def normalize_text_for_comparison(text: str) -> str:
-        """Normalize text for comparison (delegate to TextProcessor)."""
-        return TextProcessor.normalize_text(text)
-    
-    @staticmethod
-    def compare_with_template(ocr_text: str, template_text: str, 
-                            threshold: float = 0.8) -> bool:
-        """Compare with template (delegate to TextProcessor)."""
-        return TextProcessor.fuzzy_match(ocr_text, template_text, threshold)
+    normalize_text_for_comparison = staticmethod(TextProcessor.normalize_text)
+    compare_with_template = staticmethod(TextProcessor.fuzzy_match)
 
 
 # ==================== YOLO DETECTOR ====================
@@ -742,14 +575,11 @@ class YOLODetector:
         x1, y1, x2, y2 = bbox
         img_h, img_w = image.shape[:2]
 
-        quantity_x1 = max(0, x2 + offset_x)
-        quantity_y1 = max(0, y2 + offset_y)
-        quantity_x2 = min(img_w, quantity_x1 + roi_width)
-        quantity_y2 = min(img_h, quantity_y1 + roi_height)
+        quantity_x1, quantity_y1 = max(0, x2 + offset_x), max(0, y2 + offset_y)
+        quantity_x2, quantity_y2 = min(img_w, quantity_x1 + roi_width), min(img_h, quantity_y1 + roi_height)
 
         if quantity_x1 >= quantity_x2 or quantity_y1 >= quantity_y2:
             return 0, ''
-
         quantity_roi = image[quantity_y1:quantity_y2, quantity_x1:quantity_x2]
         if quantity_roi.size == 0:
             return 0, ''
@@ -757,42 +587,26 @@ class YOLODetector:
         try:
             if self.agent.ocr_engine is None:
                 return 0, ''
-
-            ocr_result = self.agent.ocr_engine.recognize(quantity_roi)
-            ocr_text = ocr_result.get('text', '')
-            
-            # Use TextProcessor for parsing (NO DUPLICATION)
-            quantity = self._parse_quantity_text(ocr_text)
-
-            return quantity, ocr_text
-
+            ocr_text = self.agent.ocr_engine.recognize(quantity_roi).get('text', '')
+            return self._parse_quantity_text(ocr_text), ocr_text
         except Exception as e:
             logger.debug(f"Quantity OCR error: {e}")
             return 0, ''
 
     @staticmethod
     def _parse_quantity_text(text: str) -> int:
-        """Parse quantity from text (uses TextProcessor - NO DUPLICATION)."""
+        """Parse quantity from text (uses TextProcessor)."""
         if not text:
             return 0
-
-        text = text.strip()
-        # Remove x/X prefix
-        if text.startswith('x') or text.startswith('X'):
-            text = text[1:].strip()
-        
-        # Use TextProcessor to extract number
+        text = text.strip().lstrip('xX').strip()
         numbers = TextProcessor.extract_numbers(text)
-        if numbers:
-            return numbers[0]
-        
-        return 0
+        return numbers[0] if numbers else 0
 
 
 # ==================== TEMPLATE MATCHER ====================
 
 class TemplateMatcher:
-    """Template-based item detector (optimized duplicate removal)."""
+    """Template-based item detector."""
 
     def __init__(self, templates_dir: str = "templates",
                  threshold: float = 0.85, method: str = "TM_CCOEFF_NORMED"):
@@ -898,23 +712,21 @@ class TemplateMatcher:
         # Group by item name first
         by_item: Dict[str, List[DetectionResult]] = {}
         for item in items:
-            if item.item not in by_item:
-                by_item[item.item] = []
-            by_item[item.item].append(item)
+            by_item.setdefault(item.item, []).append(item)
 
         unique_items = []
         CHECK_WINDOW = 10  # Only check recent items
+        min_dist_sq = min_distance * min_distance  # Use squared distance to avoid sqrt
 
-        for name, item_list in by_item.items():
+        for item_list in by_item.values():
             # Sort by position for spatial locality
             sorted_items = sorted(item_list, key=lambda i: (i.x, i.y))
 
             for item in sorted_items:
-                # Check only against recent additions (spatial locality)
+                # Check only against recent additions (use squared distance)
                 is_duplicate = any(
                     existing.item == item.item and
-                    abs(existing.x - item.x) < min_distance and
-                    abs(existing.y - item.y) < min_distance
+                    (existing.x - item.x) ** 2 + (existing.y - item.y) ** 2 < min_dist_sq
                     for existing in unique_items[-CHECK_WINDOW:]
                 )
                 if not is_duplicate:

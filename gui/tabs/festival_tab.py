@@ -24,6 +24,7 @@ class FestivalTab(BaseAutomationTab):
     def _setup_tab_specific_vars(self):
         """Setup Festival-specific variables."""
         self.output_file_var = tk.StringVar(value="")
+        self.force_new_session_var = tk.BooleanVar(value=False)
 
     def _create_config_ui(self, parent):
         """Create Festival-specific configuration UI."""
@@ -41,6 +42,26 @@ class FestivalTab(BaseAutomationTab):
         ttk.Label(output_inner, text="(Optional - auto-generated if empty)", font=('', 8), foreground='gray').grid(row=1, column=0, columnspan=3, sticky='w')
 
         output_inner.columnconfigure(1, weight=1)
+
+        # Resume Configuration
+        resume_section = ttk.LabelFrame(parent, text="Resume Options", padding=10)
+        resume_section.pack(fill='x', pady=5)
+
+        resume_inner = ttk.Frame(resume_section)
+        resume_inner.pack(fill='x')
+
+        # Force new session checkbox
+        ttk.Checkbutton(
+            resume_inner,
+            text="Force New Session (ignore previous resume state)",
+            variable=self.force_new_session_var
+        ).pack(anchor='w', pady=2)
+        ttk.Label(
+            resume_inner, 
+            text="✓ Auto-resume is enabled by default if previous session was interrupted",
+            font=('', 8), 
+            foreground='#2E7D32'
+        ).pack(anchor='w', padx=20)
 
     def _get_automation_config(self) -> Dict[str, Any]:
         """Get Festival-specific automation config."""
@@ -82,6 +103,33 @@ class FestivalTab(BaseAutomationTab):
             messagebox.showerror("Error", f"Cannot load data:\n{str(e)}")
             return
 
+        # Check for resume state if not forcing new session
+        if not self.force_new_session_var.get():
+            try:
+                temp_automation = self.automation_class(self.agent, {}, cancel_event=None)
+                resume_state = temp_automation._manage_resume_state('load')
+                
+                if resume_state:
+                    # Ask user if they want to resume
+                    resume_msg = (
+                        f"Found unfinished session:\n\n"
+                        f"• Data: {os.path.basename(resume_state.get('data_path', ''))}\n"
+                        f"• Progress: Stage {resume_state.get('current_stage', 1)}/{resume_state.get('total_stages', total_count)}\n"
+                        f"• Output: {os.path.basename(resume_state.get('output_path', ''))}\n\n"
+                        f"Continue from where you left off?"
+                    )
+                    
+                    resume_choice = messagebox.askyesnocancel("Resume Session?", resume_msg, icon='question')
+                    
+                    if resume_choice is None:  # Cancel
+                        return
+                    elif resume_choice is False:  # No - start new
+                        self.force_new_session_var.set(True)
+                        temp_automation._manage_resume_state('clear')
+                        logger.info("Starting new session")
+            except Exception as e:
+                logger.warning(f"Resume check failed: {e}")
+
         # Initialize progress
         self.progress_panel.start(total_count)
 
@@ -100,12 +148,17 @@ class FestivalTab(BaseAutomationTab):
             # Get output path if specified
             output_file = self.output_file_var.get().strip()
             output_path = output_file if output_file else None
+            
+            # Get force new session flag
+            force_new_session = self.force_new_session_var.get()
 
-            # Run with optional output path
-            if output_path:
-                success = self.automation_instance.run_all_stages(file_path, output_path)
-            else:
-                success = self.automation_instance.run(file_path)
+            # Run with all parameters (always use the new run method that supports resume)
+            success = self.automation_instance.run(
+                data_path=file_path,
+                use_detector=False,  # Can be extended to support detector option in GUI
+                output_path=output_path,
+                force_new_session=force_new_session
+            )
             
             # Call completion callback if not cancelled
             if not self.thread_cancel_event.is_set():

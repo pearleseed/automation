@@ -72,7 +72,7 @@ class GachaTab(ttk.Frame):
         canvas_frame = ttk.Frame(banner_frame)
         canvas_frame.pack(fill='both', expand=True)
         
-        canvas = tk.Canvas(canvas_frame, height=200, bg='#f5f5f5', highlightthickness=1, highlightbackground='#ccc')
+        canvas = tk.Canvas(canvas_frame, height=400, bg='#f5f5f5', highlightthickness=1, highlightbackground='#ccc')
         scrollbar = ttk.Scrollbar(canvas_frame, orient='vertical', command=canvas.yview)
         self.banner_grid = ttk.Frame(canvas)
         
@@ -152,9 +152,20 @@ class GachaTab(ttk.Frame):
         
         # Check if folder exists
         if not os.path.exists(banners_path):
-            ttk.Label(self.banner_grid, 
-                     text=f"Folder not found:\n{banners_path}\n\nPlease select a valid templates folder", 
-                     foreground='red', justify='center').pack(pady=20)
+            error_frame = tk.Frame(self.banner_grid, bg='#f5f5f5')
+            error_frame.pack(fill='both', expand=True, pady=40)
+            tk.Label(error_frame, 
+                     text=f"Folder not found", 
+                     font=('', 12, 'bold'),
+                     foreground='red', bg='#f5f5f5', justify='center').pack(pady=5)
+            tk.Label(error_frame, 
+                     text=f"{banners_path}", 
+                     font=('', 10),
+                     foreground='gray', bg='#f5f5f5', justify='center').pack(pady=5)
+            tk.Label(error_frame, 
+                     text="Please select a valid templates folder", 
+                     font=('', 9),
+                     foreground='gray', bg='#f5f5f5', justify='center').pack(pady=5)
             self.status_var.set("Folder not found")
             return
         
@@ -163,83 +174,147 @@ class GachaTab(ttk.Frame):
             banner_folders = [d for d in os.listdir(banners_path) 
                              if os.path.isdir(os.path.join(banners_path, d)) and not d.startswith('.')]
         except Exception as e:
-            ttk.Label(self.banner_grid, 
-                     text=f"Cannot access folder:\n{banners_path}\n\nError: {str(e)}", 
-                     foreground='red', justify='center').pack(pady=20)
+            error_frame = tk.Frame(self.banner_grid, bg='#f5f5f5')
+            error_frame.pack(fill='both', expand=True, pady=40)
+            tk.Label(error_frame, 
+                     text=f"Cannot access folder", 
+                     font=('', 12, 'bold'),
+                     foreground='red', bg='#f5f5f5', justify='center').pack(pady=5)
+            tk.Label(error_frame, 
+                     text=f"{banners_path}", 
+                     font=('', 10),
+                     foreground='gray', bg='#f5f5f5', justify='center').pack(pady=5)
+            tk.Label(error_frame, 
+                     text=f"Error: {str(e)}", 
+                     font=('', 9),
+                     foreground='red', bg='#f5f5f5', justify='center').pack(pady=5)
             self.status_var.set("Cannot access folder")
             return
         
         if not banner_folders:
-            ttk.Label(self.banner_grid, 
-                     text="No banners found\nCreate folders in templates/banners/\nEach folder should contain:\n  - banner.png (required)\n  - swimsuit_*.png (required)", 
-                     foreground='gray', justify='center').pack(pady=20)
+            error_frame = tk.Frame(self.banner_grid, bg='#f5f5f5')
+            error_frame.pack(fill='both', expand=True, pady=40)
+            tk.Label(error_frame, 
+                     text="No banners found", 
+                     font=('', 12, 'bold'),
+                     foreground='gray', bg='#f5f5f5', justify='center').pack(pady=5)
+            tk.Label(error_frame, 
+                     text="Create folders in templates/banners/", 
+                     font=('', 10),
+                     foreground='gray', bg='#f5f5f5', justify='center').pack(pady=5)
+            tk.Label(error_frame, 
+                     text="Each folder should contain image files", 
+                     font=('', 9),
+                     foreground='gray', bg='#f5f5f5', justify='center').pack(pady=5)
             self.status_var.set("No banners found")
             return
         
-        # Display in grid
+        # Configure grid columns for 2-column layout
+        self.banner_grid.columnconfigure(0, weight=1, uniform='banner_col')
+        self.banner_grid.columnconfigure(1, weight=1, uniform='banner_col')
+        
+        # Display in grid (2 columns for larger cards)
         for i, folder_name in enumerate(sorted(banner_folders)):
             folder_path = os.path.join(banners_path, folder_name)
-            card = ttk.Frame(self.banner_grid, relief='solid', borderwidth=1)
-            card.grid(row=i//3, column=i%3, padx=5, pady=5)
             
-            # Find banner.png in folder
-            banner_file = None
-            for ext in ['banner.png', 'banner.jpg', 'banner.jpeg']:
-                test_path = os.path.join(folder_path, ext)
-                if os.path.exists(test_path):
-                    banner_file = test_path
-                    break
+            # Create card with better styling
+            card = tk.Frame(self.banner_grid, relief='raised', borderwidth=2, bg='white')
+            card.grid(row=i//2, column=i%2, padx=10, pady=10, sticky='nsew')
             
-            # Display banner image
-            if banner_file:
+            # Find first image file in folder for preview
+            preview_file = None
+            image_files = [f for f in os.listdir(folder_path) 
+                          if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+            if image_files:
+                preview_file = os.path.join(folder_path, image_files[0])
+            
+            # Image container with padding
+            img_frame = tk.Frame(card, bg='white')
+            img_frame.pack(padx=8, pady=8, fill='x')
+            
+            # Display preview image (larger size)
+            if preview_file:
                 try:
-                    img = Image.open(banner_file)
-                    img.thumbnail((120, 80), Image.Resampling.LANCZOS)
+                    img = Image.open(preview_file)
+                    # Larger thumbnail size
+                    img.thumbnail((200, 150), Image.Resampling.LANCZOS)
                     photo = ImageTk.PhotoImage(img)
-                    lbl = ttk.Label(card, image=photo)
+                    lbl = tk.Label(img_frame, image=photo, bg='white', relief='sunken', borderwidth=1)
                     lbl.image = photo  # type: ignore
-                    lbl.pack(padx=3, pady=3)
-                except Exception:
-                    ttk.Label(card, text="[Image]").pack(padx=3, pady=3)
+                    lbl.pack(padx=5, pady=5)
+                except Exception as e:
+                    error_lbl = tk.Label(img_frame, text="[Image Error]", foreground='red', bg='white', font=('', 9))
+                    error_lbl.pack(padx=5, pady=5)
             else:
-                ttk.Label(card, text="[No Banner]", foreground='red').pack(padx=3, pady=3)
+                no_img_lbl = tk.Label(img_frame, text="[No Image]", foreground='red', bg='white', font=('', 10, 'bold'))
+                no_img_lbl.pack(padx=5, pady=5)
             
-            # Display folder name
-            name = folder_name[:17] + "..." if len(folder_name) > 20 else folder_name
-            ttk.Label(card, text=name, font=('', 8)).pack()
+            # Display folder name (larger font, better formatting)
+            name_frame = tk.Frame(card, bg='white')
+            name_frame.pack(fill='x', padx=8, pady=(0, 5))
+            name = folder_name if len(folder_name) <= 25 else folder_name[:22] + "..."
+            name_lbl = tk.Label(name_frame, text=name, font=('', 10, 'bold'), bg='white', anchor='center')
+            name_lbl.pack(fill='x')
             
-            # Check folder validity
-            has_banner = banner_file is not None
-            swimsuit_files = [f for f in os.listdir(folder_path) 
-                            if f.lower().endswith(('.png', '.jpg', '.jpeg')) and not f.lower().startswith('banner.')]
-            has_swimsuit = len(swimsuit_files) > 0
+            # Image count info
+            info_text = f"{len(image_files)} image(s)" if image_files else "No images"
+            info_lbl = tk.Label(name_frame, text=info_text, font=('', 8), bg='white', foreground='gray', anchor='center')
+            info_lbl.pack(fill='x')
             
-            valid = has_banner and has_swimsuit
-            hint_text = "✓" if valid else "?"
-            hint_color = "green" if valid else "orange"
+            # Check folder validity (has image files)
+            has_images = len(image_files) > 0
             
-            btn_frame = ttk.Frame(card)
-            btn_frame.pack(pady=3)
-            ttk.Label(btn_frame, text=hint_text, foreground=hint_color, font=('', 10, 'bold')).pack(side='left', padx=(0,3))
-            ttk.Button(btn_frame, text="Add", width=6, 
-                      command=lambda f=folder_name, p=folder_path, b=banner_file: self._add_banner(f, p, b)).pack(side='left')
+            # Button frame with status indicator
+            btn_frame = tk.Frame(card, bg='white')
+            btn_frame.pack(pady=(0, 8), fill='x', padx=8)
+            
+            # Status indicator
+            status_frame = tk.Frame(btn_frame, bg='white')
+            status_frame.pack(side='left', padx=(0, 8))
+            
+            if has_images:
+                status_text = "✓ Ready"
+                status_color = '#28a745'
+            else:
+                status_text = "⚠ No Images"
+                status_color = '#ffc107'
+            
+            status_lbl = tk.Label(status_frame, text=status_text, font=('', 9, 'bold'), 
+                                foreground=status_color, bg='white')
+            status_lbl.pack()
+            
+            # Add button (larger, more visible)
+            add_btn = ttk.Button(btn_frame, text="Add Banner", width=12,
+                                command=lambda f=folder_name, p=folder_path: self._add_banner(f, p))
+            add_btn.pack(side='right')
         
         self.status_var.set(f"Found {len(banner_folders)} banner folders")
 
-    def _add_banner(self, folder_name: str, folder_path: str, banner_file: Optional[str]):
+    def _add_banner(self, folder_name: str, folder_path: str):
         """Add banner to selected list."""
-        if not banner_file or not os.path.exists(banner_file):
-            messagebox.showerror("Error", f"Banner file not found in folder:\n{folder_path}\n\nCreate a file named 'banner.png' in this folder!")
+        # Get all image files in folder
+        image_files = [f for f in os.listdir(folder_path) 
+                      if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+        
+        if not image_files:
+            messagebox.showerror("Error", f"No image files found in folder:\n{folder_path}")
             return
         
-        # Check for swimsuit files
-        swimsuit_files = [f for f in os.listdir(folder_path) 
-                         if f.lower().endswith(('.png', '.jpg', '.jpeg')) and not f.lower().startswith('banner.')]
+        # If only one image file, use it directly
+        if len(image_files) == 1:
+            banner_file = os.path.join(folder_path, image_files[0])
+        else:
+            # Let user select banner file
+            banner_file = filedialog.askopenfilename(
+                title=f"Select banner file for {folder_name}",
+                initialdir=folder_path,
+                filetypes=[("Image files", "*.png *.jpg *.jpeg"), ("All files", "*.*")]
+            )
+            if not banner_file:
+                return
         
-        if not swimsuit_files:
-            if messagebox.askyesno("No Swimsuit Templates", 
-                f"No swimsuit templates found in:\n{folder_path}\n\nOpen folder to add swimsuit templates?"):
-                subprocess.run(['explorer', folder_path])
+        if not os.path.exists(banner_file):
+            messagebox.showerror("Error", f"Banner file not found:\n{banner_file}")
             return
         
         self.selected_gachas.append({

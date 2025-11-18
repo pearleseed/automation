@@ -9,6 +9,7 @@ from typing import Optional, Tuple, List, Union
 from airtest.core.api import connect_device, touch
 from airtest.core.error import AirtestError
 from .utils import get_logger
+from .config import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY, DEFAULT_TOUCH_TIMES
 
 # ==================== OCR ENGINE ENHANCEMENT ====================
 
@@ -32,10 +33,6 @@ class EnhancedOcrEngine(oneocr.OcrEngine):
 
 class Agent:
     """Agent for device interaction via Airtest and OCR processing."""
-    
-    DEFAULT_MAX_RETRIES = 3
-    DEFAULT_RETRY_DELAY = 1.0
-    DEFAULT_TOUCH_TIMES = 1
 
     def __init__(self, device_url: str = "Windows:///?title_re=DOAX VenusVacation.*", 
                  enable_retry: bool = True, auto_connect: bool = True):

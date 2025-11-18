@@ -26,7 +26,7 @@ from core.data import ResultWriter, load_data
 from core.config import (
     HOPPING_ROI_CONFIG, get_hopping_config, merge_config
 )
-from core.detector import OCRTextProcessor
+from core.detector import OCRTextProcessor, TextProcessor
 
 logger = get_logger(__name__)
 
@@ -56,17 +56,18 @@ class HoppingAutomation(BaseAutomation):
         self.structured_logger.info(f"Log: {log_file}")
 
     def process_world_name(self, raw_world_name: str) -> Dict[str, Any]:
-        """Process world name with OCR text cleaning."""
+        """Process world name with OCR text cleaning using TextProcessor."""
         result = {'world_name': 'Unknown', 'normalized_name': '', 'raw_name': raw_world_name, 'confidence': 0.0}
         
         try:
             if raw_world_name:
-                # Clean OCR artifacts
-                cleaned = raw_world_name.strip()
-                cleaned = ' '.join(cleaned.split())  # Remove extra spaces
+                # Clean OCR artifacts using TextProcessor
+                cleaned = TextProcessor.clean_ocr_artifacts(raw_world_name.strip())
+                # Remove extra spaces
+                cleaned = ' '.join(cleaned.split())
                 
-                # Normalize for comparison
-                normalized = OCRTextProcessor.normalize_text_for_comparison(cleaned)
+                # Normalize for comparison using TextProcessor
+                normalized = TextProcessor.normalize_text(cleaned, remove_spaces=True, lowercase=True)
                 
                 result['world_name'] = cleaned
                 result['normalized_name'] = normalized

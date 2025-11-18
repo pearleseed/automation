@@ -13,6 +13,7 @@ from enum import Enum
 from .agent import Agent
 from .utils import get_logger, ensure_directory
 from .detector import TextProcessor
+from .config import DEFAULT_TOUCH_TIMES
 
 
 logger = get_logger(__name__)
@@ -109,7 +110,7 @@ class ExecutionStep:
 class BaseAutomation:
     """Base class for all automation modules with common functionality."""
 
-    def __init__(self, agent: Agent, config: Dict[str, Any], roi_config_dict: Dict[str, Dict[str, Any]], cancel_event=None):
+    def __init__(self, agent: Agent, config: Dict[str, Any], roi_config_dict: Dict[str, list], cancel_event=None):
         self.agent = agent
         self.roi_config_dict = roi_config_dict
         self.cancel_event = cancel_event
@@ -131,79 +132,59 @@ class BaseAutomation:
             logger.info(msg)
             raise CancellationError(msg)
 
-    def touch_template(self, template_name: str, optional: bool = False) -> bool:
-        """Touch template image."""
+    def touch_template(self, template_name: str, optional: bool = False, times: int = DEFAULT_TOUCH_TIMES) -> bool:
+        """Touch template image (optional: True if not found ok, times: repeat count)."""
         try:
             self.check_cancelled(f"touch_template({template_name})")
             
             template_path = os.path.join(self.templates_path, template_name)
-            if not os.path.exists(template_path):
+            if not os.path.exists(template_path) or self.agent.device is None:
+                if self.agent.device is None:
+                    logger.error("Device not connected")
+                return optional
+            
+            pos = exists(Template(template_path))
+            if not pos:
                 return optional
 
-            if self.agent.device is None:
-                logger.error("Device not connected")
-                return False
-
-            template = Template(template_path)
-            pos = exists(template)
-
-            if pos:
+            for i in range(times):
                 self.check_cancelled(f"touch_template({template_name})")
                 self.agent.safe_touch(pos)
-                logger.info(f"✓ {template_name}")
-                sleep(self.wait_after_touch)
-                return True
-
-            return optional if optional else False
+                log_msg = f"✓ {template_name}" + (f" (touch #{i+1}/{times})" if times > 1 else "")
+                logger.info(log_msg)
+                if i < times - 1:
+                    sleep(self.wait_after_touch * 0.5)
+            
+            sleep(self.wait_after_touch)
+            return True
 
         except CancellationError:
             return False
         except Exception as e:
-            logger.error(f"✗ {template_name}: {e}") if not optional else None
+            if not optional:
+                logger.error(f"✗ {template_name}: {e}")
             return optional
 
     def touch_template_while_exists(self, template_name: str, max_attempts: int = 5, 
                                    delay_between_touches: float = 0.3) -> int:
-        """
-        Continuously touch a template while it exists (similar to Airtest's exists mechanism).
-        
-        Args:
-            template_name: Name of the template file
-            max_attempts: Maximum number of touches to prevent infinite loops
-            delay_between_touches: Delay between each touch attempt
-            
-        Returns:
-            Number of times the template was found and touched
-        """
+        """Touch template repeatedly while it exists (returns touch count)."""
         touch_count = 0
         try:
             template_path = os.path.join(self.templates_path, template_name)
-            if not os.path.exists(template_path):
+            if not os.path.exists(template_path) or self.agent.device is None:
                 logger.debug(f"Template not found: {template_name}")
                 return 0
-
-            if self.agent.device is None:
-                logger.error("Device not connected")
-                return 0
-
-            template = Template(template_path)
             
-            for attempt in range(max_attempts):
+            template = Template(template_path)
+            for _ in range(max_attempts):
                 self.check_cancelled(f"touch_template_while_exists({template_name})")
-                
                 pos = exists(template)
-                
                 if not pos:
-                    # Template no longer exists
                     break
                 
-                # Template exists, touch it
-                self.check_cancelled(f"touch_template_while_exists({template_name})")
                 self.agent.safe_touch(pos)
                 touch_count += 1
                 logger.info(f"✓ {template_name} (touch #{touch_count})")
-                
-                # Wait before checking again
                 sleep(delay_between_touches)
             
             if touch_count > 0:
@@ -230,8 +211,8 @@ class BaseAutomation:
             logger.error("Cannot get screenshot")
         return screenshot
 
-    def get_roi_config(self, roi_name: str) -> Optional[Dict[str, Any]]:
-        """Get ROI configuration."""
+    def get_roi_config(self, roi_name: str) -> Optional[list]:
+        """Get ROI configuration [x1, x2, y1, y2]."""
         if roi_name not in self.roi_config_dict:
             logger.error(f"ROI '{roi_name}' not found")
             return None
@@ -243,8 +224,7 @@ class BaseAutomation:
         if roi_config is None:
             return None
 
-        coords = roi_config['coords']  # [x1, x2, y1, y2]
-        x1, x2, y1, y2 = coords
+        x1, x2, y1, y2 = roi_config  # [x1, x2, y1, y2]
         
         roi_image = screenshot[y1:y2, x1:x2]
         if roi_image is None or roi_image.size == 0:
@@ -272,15 +252,14 @@ class BaseAutomation:
             return None
 
     def ocr_roi(self, roi_name: str, screenshot: Optional[Any] = None) -> str:
-        """OCR specific ROI region using agent.ocr()."""
+        """OCR text from ROI region (returns cleaned text)."""
         try:
             # Get ROI config using helper
             roi_config = self.get_roi_config(roi_name)
             if roi_config is None:
                 return ""
 
-            coords = roi_config['coords']  # [x1, x2, y1, y2]
-            x1, x2, y1, y2 = coords
+            x1, x2, y1, y2 = roi_config  # [x1, x2, y1, y2]
             region = (x1, y1, x2, y2)
 
             if screenshot is None:
@@ -305,15 +284,18 @@ class BaseAutomation:
 
     @staticmethod
     def _clean_ocr_text(text: str) -> str:
-        """Clean OCR text."""
+        """Clean OCR text using TextProcessor."""
         if not text:
             return ""
-        text = text.replace('\n', ' ').replace('\r', '')
-        return ' '.join(text.split()).strip()
+        # Use TextProcessor for consistent text cleaning
+        cleaned = TextProcessor.clean_ocr_artifacts(text)
+        # Additional normalization: remove newlines and normalize spaces
+        cleaned = cleaned.replace('\n', ' ').replace('\r', '')
+        return ' '.join(cleaned.split()).strip()
 
     def scan_screen_roi(self, screenshot: Optional[Any] = None,
                        roi_names: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Scan screen according to defined ROI regions."""
+        """Scan multiple ROI regions and return OCR results dict."""
         try:
             # Get screenshot using helper
             screenshot = self.get_screenshot(screenshot)
@@ -342,36 +324,9 @@ class BaseAutomation:
             logger.error(f"✗ Scan screen ROI: {e}")
             return {}
 
-    def snapshot_and_ocr(self) -> List[Dict[str, Any]]:
-        """Take screenshot and OCR to get text + coordinates using agent.ocr()."""
-        try:
-            # Use agent.ocr() directly - more efficient
-            ocr_result = self.agent.ocr()
-            if ocr_result is None:
-                logger.error("OCR failed")
-                return []
-
-            lines = ocr_result.get('lines', [])
-
-            results = []
-            for line in lines:
-                text = line.get('text', '').strip()
-                bbox = line.get('bounding_rect', {})
-                if text and bbox:
-                    center_x = (bbox.get('x1', 0) + bbox.get('x3', 0)) / 2
-                    center_y = (bbox.get('y1', 0) + bbox.get('y3', 0)) / 2
-                    results.append({'text': text, 'center': (center_x, center_y)})
-
-            logger.info(f"OCR: {len(results)} texts")
-            return results
-
-        except Exception as e:
-            logger.error(f"✗ OCR: {e}")
-            return []
-
     def find_text(self, ocr_results: List[Dict[str, Any]], search_text: str, 
                   threshold: float = 0.7, use_fuzzy: bool = True) -> Optional[Dict[str, Any]]:
-        """Find text in OCR results using fuzzy matching."""
+        """Find text in OCR results (use_fuzzy: similarity matching)."""
         if not ocr_results or not search_text:
             return None
         
@@ -410,15 +365,14 @@ class BaseAutomation:
             return None
 
     def ocr_roi_with_lines(self, roi_name: str) -> List[Dict[str, Any]]:
-        """OCR specific ROI region and return individual text lines with coordinates."""
+        """OCR ROI and return text lines with coordinates."""
         try:
             # Get ROI config using helper
             roi_config = self.get_roi_config(roi_name)
             if roi_config is None:
                 return []
 
-            coords = roi_config['coords']  # [x1, x2, y1, y2]
-            x1, x2, y1, y2 = coords
+            x1, x2, y1, y2 = roi_config  # [x1, x2, y1, y2]
             region = (x1, y1, x2, y2)
 
             # OCR the ROI region
@@ -427,7 +381,7 @@ class BaseAutomation:
                 logger.warning(f"✗ ROI '{roi_name}': OCR failed")
                 return []
 
-            # Parse individual lines (similar to snapshot_and_ocr)
+            # Parse individual lines from OCR result
             lines = ocr_result.get('lines', [])
             results = []
 
@@ -449,7 +403,7 @@ class BaseAutomation:
 
     def find_and_touch_in_roi(self, roi_name: str, search_text: str,
                               threshold: float = 0.7, use_fuzzy: bool = True) -> bool:
-        """Find text in specific ROI region and touch it using fuzzy matching."""
+        """Find and touch text in ROI (use_fuzzy: similarity matching)."""
         try:
             self.check_cancelled(f"find_and_touch_in_roi({roi_name}, {search_text})")
 
