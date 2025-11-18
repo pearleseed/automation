@@ -6,8 +6,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import os
 import threading
-import subprocess
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from PIL import Image, ImageTk
 
 from automations.gachas import GachaAutomation
@@ -72,7 +71,7 @@ class GachaTab(ttk.Frame):
         canvas_frame = ttk.Frame(banner_frame)
         canvas_frame.pack(fill='both', expand=True)
         
-        canvas = tk.Canvas(canvas_frame, height=400, bg='#f5f5f5', highlightthickness=1, highlightbackground='#ccc')
+        canvas = tk.Canvas(canvas_frame, height=300, bg='#f5f5f5', highlightthickness=1, highlightbackground='#ccc')
         scrollbar = ttk.Scrollbar(canvas_frame, orient='vertical', command=canvas.yview)
         self.banner_grid = ttk.Frame(canvas)
         
@@ -213,13 +212,13 @@ class GachaTab(ttk.Frame):
         self.banner_grid.columnconfigure(0, weight=1, uniform='banner_col')
         self.banner_grid.columnconfigure(1, weight=1, uniform='banner_col')
         
-        # Display in grid (2 columns for larger cards)
+        # Display in grid (2 columns for compact cards)
         for i, folder_name in enumerate(sorted(banner_folders)):
             folder_path = os.path.join(banners_path, folder_name)
             
             # Create card with better styling
             card = tk.Frame(self.banner_grid, relief='raised', borderwidth=2, bg='white')
-            card.grid(row=i//2, column=i%2, padx=10, pady=10, sticky='nsew')
+            card.grid(row=i//2, column=i%2, padx=6, pady=6, sticky='nsew')
             
             # Find first image file in folder for preview
             preview_file = None
@@ -230,14 +229,14 @@ class GachaTab(ttk.Frame):
             
             # Image container with padding
             img_frame = tk.Frame(card, bg='white')
-            img_frame.pack(padx=8, pady=8, fill='x')
+            img_frame.pack(padx=5, pady=5, fill='x')
             
-            # Display preview image (larger size)
+            # Display preview image (compact size)
             if preview_file:
                 try:
                     img = Image.open(preview_file)
-                    # Larger thumbnail size
-                    img.thumbnail((200, 150), Image.Resampling.LANCZOS)
+                    # Compact thumbnail size
+                    img.thumbnail((140, 100), Image.Resampling.LANCZOS)
                     photo = ImageTk.PhotoImage(img)
                     lbl = tk.Label(img_frame, image=photo, bg='white', relief='sunken', borderwidth=1)
                     lbl.image = photo  # type: ignore
@@ -249,16 +248,16 @@ class GachaTab(ttk.Frame):
                 no_img_lbl = tk.Label(img_frame, text="[No Image]", foreground='red', bg='white', font=('', 10, 'bold'))
                 no_img_lbl.pack(padx=5, pady=5)
             
-            # Display folder name (larger font, better formatting)
+            # Display folder name (compact font, better formatting)
             name_frame = tk.Frame(card, bg='white')
-            name_frame.pack(fill='x', padx=8, pady=(0, 5))
-            name = folder_name if len(folder_name) <= 25 else folder_name[:22] + "..."
-            name_lbl = tk.Label(name_frame, text=name, font=('', 10, 'bold'), bg='white', anchor='center')
+            name_frame.pack(fill='x', padx=5, pady=(0, 3))
+            name = folder_name if len(folder_name) <= 20 else folder_name[:17] + "..."
+            name_lbl = tk.Label(name_frame, text=name, font=('', 9, 'bold'), bg='white', anchor='center')
             name_lbl.pack(fill='x')
             
             # Image count info
             info_text = f"{len(image_files)} image(s)" if image_files else "No images"
-            info_lbl = tk.Label(name_frame, text=info_text, font=('', 8), bg='white', foreground='gray', anchor='center')
+            info_lbl = tk.Label(name_frame, text=info_text, font=('', 7), bg='white', foreground='gray', anchor='center')
             info_lbl.pack(fill='x')
             
             # Check folder validity (has image files)
@@ -266,25 +265,25 @@ class GachaTab(ttk.Frame):
             
             # Button frame with status indicator
             btn_frame = tk.Frame(card, bg='white')
-            btn_frame.pack(pady=(0, 8), fill='x', padx=8)
+            btn_frame.pack(pady=(0, 5), fill='x', padx=5)
             
             # Status indicator
             status_frame = tk.Frame(btn_frame, bg='white')
-            status_frame.pack(side='left', padx=(0, 8))
+            status_frame.pack(side='left', padx=(0, 5))
             
             if has_images:
-                status_text = "✓ Ready"
+                status_text = "Ready"
                 status_color = '#28a745'
             else:
-                status_text = "⚠ No Images"
+                status_text = "No Images"
                 status_color = '#ffc107'
             
-            status_lbl = tk.Label(status_frame, text=status_text, font=('', 9, 'bold'), 
+            status_lbl = tk.Label(status_frame, text=status_text, font=('', 8, 'bold'), 
                                 foreground=status_color, bg='white')
             status_lbl.pack()
             
-            # Add button (larger, more visible)
-            add_btn = ttk.Button(btn_frame, text="Add Banner", width=12,
+            # Add button (compact, visible)
+            add_btn = ttk.Button(btn_frame, text="Add", width=8,
                                 command=lambda f=folder_name, p=folder_path: self._add_banner(f, p))
             add_btn.pack(side='right')
         

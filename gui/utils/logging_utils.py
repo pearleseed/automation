@@ -14,7 +14,7 @@ from core.utils import get_logger
 logger = get_logger(__name__)
 
 
-class OptimizedQueueHandler(logging.Handler):
+class QueueHandler(logging.Handler):
     """Optimized logging handler with buffering and batch processing."""
 
     def __init__(self, log_queue, buffer_size=50, flush_interval=0.5):
@@ -63,7 +63,7 @@ class OptimizedQueueHandler(logging.Handler):
             self._flush_buffer()
 
 
-class OptimizedLogViewer:
+class LogViewer:
     """Optimized log viewer with adaptive polling and performance monitoring."""
 
     def __init__(self, parent, log_queue, max_lines=1000, poll_interval=200):
@@ -79,15 +79,28 @@ class OptimizedLogViewer:
 
     def _setup_ui(self):
         """Setup the log viewer UI."""
-        # Log container
-        log_container = ttk.Frame(self.parent)
-        log_container.pack(fill='both', expand=True, pady=(5, 0))
+        # Log container with border
+        log_container = ttk.LabelFrame(self.parent, text="Activity Logs", padding=5)
+        log_container.pack(fill='both', expand=True)
 
         # Log header with controls
         log_header = ttk.Frame(log_container)
-        log_header.pack(fill='x')
+        log_header.pack(fill='x', pady=(0, 3))
 
-        ttk.Label(log_header, text="Activity Logs", font=('', 10, 'bold')).pack(side='left', padx=5)
+        # Control buttons
+        ttk.Button(
+            log_header,
+            text="Clear",
+            command=self.clear_logs,
+            width=10
+        ).pack(side='left', padx=2, ipady=3)
+
+        ttk.Button(
+            log_header,
+            text="Save",
+            command=self.save_logs,
+            width=10
+        ).pack(side='left', padx=2, ipady=3)
 
         # Auto-scroll checkbox
         self.auto_scroll_var = tk.BooleanVar(value=True)
@@ -96,30 +109,22 @@ class OptimizedLogViewer:
             text="Auto-scroll",
             variable=self.auto_scroll_var
         ).pack(side='right', padx=5)
+        
+        # Info label
+        ttk.Label(
+            log_header, 
+            text="Drag the divider above to resize", 
+            font=('', 8), 
+            foreground='#666'
+        ).pack(side='right', padx=10)
 
-
-        # Control buttons
-        ttk.Button(
-            log_header,
-            text="Clear",
-            command=self.clear_logs,
-            width=10
-        ).pack(side='right', padx=5, ipady=4)
-
-        ttk.Button(
-            log_header,
-            text="Save",
-            command=self.save_logs,
-            width=10
-        ).pack(side='right', padx=5, ipady=4)
-
-        # Log text widget
+        # Log text widget with compact height
         log_frame = ttk.Frame(log_container)
-        log_frame.pack(fill='both', expand=True, pady=5)
+        log_frame.pack(fill='both', expand=True)
 
         self.log_text = scrolledtext.ScrolledText(
             log_frame,
-            height=12,
+            height=8,  # Reduced from 12 to 8 for better space distribution
             wrap=tk.WORD,
             font=('Courier', 9),
             state='normal'  # Allow editing for selection/copy

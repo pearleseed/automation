@@ -12,7 +12,7 @@ from core.utils import get_logger
 from gui.tabs.festival_tab import FestivalTab
 from gui.tabs.gacha_tab import GachaTab
 from gui.tabs.hopping_tab import HoppingTab
-from gui.utils.logging_utils import OptimizedQueueHandler, OptimizedLogViewer
+from gui.utils.logging_utils import QueueHandler, LogViewer
 from gui.utils.thread_utils import get_thread_manager, shutdown_thread_manager
 
 logger = get_logger(__name__)
@@ -60,7 +60,7 @@ class AutoCPeachGUI(tk.Tk):
 
     def setup_logging(self):
         """Configure logging with buffered queue handler."""
-        queue_handler = OptimizedQueueHandler(self.log_queue, buffer_size=25, flush_interval=0.3)
+        queue_handler = QueueHandler(self.log_queue, buffer_size=25, flush_interval=0.3)
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S')
         queue_handler.setFormatter(formatter)
         logging.getLogger().addHandler(queue_handler)
@@ -104,9 +104,17 @@ class AutoCPeachGUI(tk.Tk):
         content_frame = ttk.Frame(self)
         content_frame.pack(fill='both', expand=True, padx=5, pady=5)
 
-        # Automation tabs
-        self.notebook = ttk.Notebook(content_frame)
-        self.notebook.pack(fill='both', expand=True, side='top')
+        # Create PanedWindow for resizable split between tabs and logs
+        # User can drag the divider to adjust space between tabs and activity log
+        paned = ttk.PanedWindow(content_frame, orient=tk.VERTICAL)
+        paned.pack(fill='both', expand=True)
+
+        # Top pane: Automation tabs
+        tabs_frame = ttk.Frame(paned)
+        paned.add(tabs_frame, weight=3)  # Give more weight to tabs
+
+        self.notebook = ttk.Notebook(tabs_frame)
+        self.notebook.pack(fill='both', expand=True)
 
         if self.agent:
             self.festival_tab = FestivalTab(self.notebook, self.agent)
@@ -122,8 +130,11 @@ class AutoCPeachGUI(tk.Tk):
         self.notebook.add(settings_tab, text="Settings")
         self.setup_settings_tab(settings_tab)
 
-        # Log viewer
-        self.log_viewer = OptimizedLogViewer(content_frame, self.log_queue,
+        # Bottom pane: Log viewer
+        log_frame = ttk.Frame(paned)
+        paned.add(log_frame, weight=1)  # Give less weight to logs
+
+        self.log_viewer = LogViewer(log_frame, self.log_queue,
                                              max_lines=int(self.max_log_lines_var.get()), poll_interval=200)
 
         # Footer

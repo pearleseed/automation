@@ -78,17 +78,21 @@ FESTIVAL_CONFIG: Dict[str, Any] = {
     'templates_path': DEFAULT_PATHS['templates'],
     'snapshot_dir': f"{DEFAULT_PATHS['results']}/festival/snapshots",
     'results_dir': f"{DEFAULT_PATHS['results']}/festival/results",
+    
     # Timing & Retry
     'wait_after_touch': 1.0,
     'max_step_retries': 5,
     'retry_delay': 1.0,
+    
     # Fuzzy matching (0.9+=strict, 0.7-0.8=balanced, 0.5-0.6=lenient)
     'fuzzy_matching': {'enabled': True, 'threshold': 0.7},
+    
     # Detector (yolo/template/auto)
     'use_detector': True,
     'detector_type': 'template',
     'yolo_config': {'model_path': 'yolo11n.pt', 'confidence': 0.25, 'device': 'cpu'},
     'template_config': {'templates_dir': DEFAULT_PATHS['templates'], 'threshold': 0.85, 'method': 'TM_CCOEFF_NORMED'},
+    
     # ROI groups
     'festivals_rois': ['フェス名', 'フェスランク'],
     'pre_battle_rois': ['勝利点数', '推奨ランク', '消費FP', 'Sランクボーダー', '初回クリア報酬', 'Sランク報酬'],
@@ -100,11 +104,13 @@ GACHA_CONFIG: Dict[str, Any] = {
     'templates_path': DEFAULT_PATHS['templates'],
     'snapshot_dir': f"{DEFAULT_PATHS['results']}/gacha/snapshots",
     'results_dir': f"{DEFAULT_PATHS['results']}/gacha/results",
+    
     # Timing & Pull settings
     'wait_after_touch': 1.0,
     'wait_after_pull': 2.0,
     'max_pulls': 10,
     'pull_type': 'single',  # single or multi
+    
     # Detector
     'use_detector': False,
     'detector_type': 'auto',
@@ -115,14 +121,17 @@ HOPPING_CONFIG: Dict[str, Any] = {
     'templates_path': DEFAULT_PATHS['templates'],
     'snapshot_dir': f"{DEFAULT_PATHS['results']}/hopping/snapshots",
     'results_dir': f"{DEFAULT_PATHS['results']}/hopping/results",
+    
     # Timing
     'wait_after_touch': 1.0,
     'loading_wait': 5.0,     # Loading wait when hopping
     'cooldown_wait': 3.0,    # Cooldown wait time
+    
     # Hop settings
     'max_hops': 10,
     'retry_on_fail': True,
     'max_retries': 3,
+    
     # Detector
     'use_detector': False,
     'detector_type': 'auto',
