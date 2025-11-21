@@ -2,10 +2,10 @@
 Festival Tab for GUI
 """
 
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
 import os
-from typing import Dict, Any
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+from typing import Any, Dict
 
 from automations.festivals import FestivalAutomation
 from core.agent import Agent
@@ -16,7 +16,12 @@ logger = get_logger(__name__)
 
 
 class FestivalTab(BaseAutomationTab):
-    """Tab for Festival Automation with improved UI."""
+    """Tab for Festival Automation with resume support and progress tracking.
+
+    This tab provides UI for configuring and running festival automation,
+    including data file selection, output configuration, and resume options
+    for interrupted sessions.
+    """
 
     def __init__(self, parent, agent: Agent):
         super().__init__(parent, agent, "Festival", FestivalAutomation)
@@ -27,41 +32,52 @@ class FestivalTab(BaseAutomationTab):
         self.force_new_session_var = tk.BooleanVar(value=False)
 
     def _create_config_ui(self, parent):
-        """Create Festival-specific configuration UI."""
+        """Create Festival-specific configuration UI with compact design."""
         # Output Configuration
-        output_section = ttk.LabelFrame(parent, text="Output", padding=10)
-        output_section.pack(fill='x', pady=5)
+        output_section = ttk.LabelFrame(parent, text="Output Settings", padding=8)
+        output_section.pack(fill="x", pady=(0, 6))
 
         output_inner = ttk.Frame(output_section)
-        output_inner.pack(fill='x')
+        output_inner.pack(fill="x")
 
         # Output file (optional)
-        ttk.Label(output_inner, text="Output File:", font=('', 10)).grid(row=0, column=0, sticky='w', pady=2)
-        ttk.Entry(output_inner, textvariable=self.output_file_var, width=30, font=('', 10)).grid(row=0, column=1, sticky='ew', padx=5, pady=2)
-        ttk.Button(output_inner, text="Browse", command=self.browse_output, width=8).grid(row=0, column=2, pady=2, ipady=5)
-        ttk.Label(output_inner, text="(Optional - auto-generated if empty)", font=('', 8), foreground='gray').grid(row=1, column=0, columnspan=3, sticky='w')
+        ttk.Label(output_inner, text="Output File:", font=("Segoe UI", 9, "bold")).grid(
+            row=0, column=0, sticky="w", pady=3
+        )
+        ttk.Entry(
+            output_inner, textvariable=self.output_file_var, font=("Segoe UI", 9)
+        ).grid(row=0, column=1, sticky="ew", padx=3, pady=3)
+        ttk.Button(output_inner, text="...", command=self.browse_output, width=3).grid(
+            row=0, column=2, pady=3, ipady=2
+        )
+        ttk.Label(
+            output_inner,
+            text="Optional - auto-generated if empty",
+            font=("Segoe UI", 8),
+            foreground="#666",
+        ).grid(row=1, column=0, columnspan=3, sticky="w")
 
         output_inner.columnconfigure(1, weight=1)
 
         # Resume Configuration
-        resume_section = ttk.LabelFrame(parent, text="Resume Options", padding=10)
-        resume_section.pack(fill='x', pady=5)
+        resume_section = ttk.LabelFrame(parent, text="Resume Options", padding=8)
+        resume_section.pack(fill="x", pady=(0, 6))
 
         resume_inner = ttk.Frame(resume_section)
-        resume_inner.pack(fill='x')
+        resume_inner.pack(fill="x")
 
         # Force new session checkbox
         ttk.Checkbutton(
             resume_inner,
             text="Force New Session (ignore previous resume state)",
-            variable=self.force_new_session_var
-        ).pack(anchor='w', pady=2)
+            variable=self.force_new_session_var,
+        ).pack(anchor="w", pady=3)
         ttk.Label(
-            resume_inner, 
-            text="✓ Auto-resume is enabled by default if previous session was interrupted",
-            font=('', 8), 
-            foreground='#2E7D32'
-        ).pack(anchor='w', padx=20)
+            resume_inner,
+            text="Auto-resume enabled by default if session was interrupted",
+            font=("Segoe UI", 8),
+            foreground="#2E7D32",
+        ).pack(anchor="w", padx=15, pady=(0, 3))
 
     def _get_automation_config(self) -> Dict[str, Any]:
         """Get Festival-specific automation config."""
@@ -72,7 +88,7 @@ class FestivalTab(BaseAutomationTab):
         filename = filedialog.asksaveasfilename(
             title="Save results to (optional)",
             defaultextension=".csv",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
         )
         if filename:
             self.output_file_var.set(filename)
@@ -88,11 +104,14 @@ class FestivalTab(BaseAutomationTab):
 
         # Check device
         if not self.agent.is_device_connected():
-            messagebox.showerror("Error", "Device not connected!\nPlease connect device first.")
+            messagebox.showerror(
+                "Error", "Device not connected!\nPlease connect device first."
+            )
             return
 
         # Load data to get count for progress tracking
         from core.data import load_data
+
         try:
             data_list = load_data(file_path)
             if not data_list:
@@ -106,9 +125,11 @@ class FestivalTab(BaseAutomationTab):
         # Check for resume state if not forcing new session
         if not self.force_new_session_var.get():
             try:
-                temp_automation = self.automation_class(self.agent, {}, cancel_event=None)
-                resume_state = temp_automation._manage_resume_state('load')
-                
+                temp_automation = self.automation_class(
+                    self.agent, {}, cancel_event=None
+                )
+                resume_state = temp_automation._manage_resume_state("load")
+
                 if resume_state:
                     # Ask user if they want to resume
                     resume_msg = (
@@ -118,17 +139,19 @@ class FestivalTab(BaseAutomationTab):
                         f"• Output: {os.path.basename(resume_state.get('output_path', ''))}\n\n"
                         f"Continue from where you left off?"
                     )
-                    
-                    resume_choice = messagebox.askyesnocancel("Resume Session?", resume_msg, icon='question')
-                    
+
+                    resume_choice = messagebox.askyesnocancel(
+                        "Resume Session?", resume_msg, icon="question"
+                    )
+
                     if resume_choice is None:  # Cancel
                         return
                     elif resume_choice is False:  # No - start new
                         self.force_new_session_var.set(True)
-                        temp_automation._manage_resume_state('clear')
+                        temp_automation._manage_resume_state("clear")
                         logger.info("Starting new session")
-            except Exception as e:
-                logger.warning(f"Resume check failed: {e}")
+            except Exception as err:
+                logger.warning(f"Resume check failed: {err}")
 
         # Initialize progress
         self.progress_panel.start(total_count)
@@ -141,14 +164,16 @@ class FestivalTab(BaseAutomationTab):
         try:
             # Initialize automation instance if not already done
             if not self.automation_instance:
-                self.automation_instance = self.automation_class(self.agent, config, cancel_event=self.thread_cancel_event)
+                self.automation_instance = self.automation_class(
+                    self.agent, config, cancel_event=self.thread_cancel_event
+                )
                 if not self.automation_instance:
                     raise RuntimeError("Failed to initialize Festival automation")
-            
+
             # Get output path if specified
             output_file = self.output_file_var.get().strip()
             output_path = output_file if output_file else None
-            
+
             # Get force new session flag
             force_new_session = self.force_new_session_var.get()
 
@@ -157,13 +182,13 @@ class FestivalTab(BaseAutomationTab):
                 data_path=file_path,
                 use_detector=False,  # Can be extended to support detector option in GUI
                 output_path=output_path,
-                force_new_session=force_new_session
+                force_new_session=force_new_session,
             )
-            
+
             # Call completion callback if not cancelled
             if not self.thread_cancel_event.is_set():
                 self.after(0, lambda: self._automation_finished(success))
-            
+
             return success
 
         except Exception as e:

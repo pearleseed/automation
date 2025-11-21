@@ -2,63 +2,85 @@
 Progress Panel Component
 """
 
+import time
 import tkinter as tk
 from tkinter import ttk
-import time
 
 
 class ProgressPanel(ttk.Frame):
-    """Panel displaying progress and statistics."""
+    """Panel displaying progress and statistics for automation tasks.
+
+    This panel shows a progress bar, success/failure counts, elapsed time,
+    and estimated time of arrival (ETA) for running automations.
+    """
 
     def __init__(self, parent):
-        super().__init__(parent, relief='solid', borderwidth=1)
+        super().__init__(parent, relief="flat", borderwidth=0)
 
         # Title
-        ttk.Label(self, text="Progress & Statistics",
-                 font=('', 11, 'bold')).pack(pady=5)
+        title_frame = ttk.Frame(self)
+        title_frame.pack(fill="x", pady=(3, 5))
+        ttk.Label(
+            title_frame, text="Progress & Statistics", font=("Segoe UI", 10, "bold")
+        ).pack()
 
         # Progress bar
         self.progress_var = tk.DoubleVar(value=0)
         self.progress = ttk.Progressbar(
-            self,
-            variable=self.progress_var,
-            maximum=100,
-            mode='determinate'
+            self, variable=self.progress_var, maximum=100, mode="determinate"
         )
-        self.progress.pack(fill='x', padx=10, pady=5)
+        self.progress.pack(fill="x", padx=8, pady=3)
 
         # Progress label
-        self.progress_label = ttk.Label(self, text="Ready", font=('', 9))
-        self.progress_label.pack(pady=2)
+        self.progress_label = ttk.Label(self, text="Ready", font=("Segoe UI", 8))
+        self.progress_label.pack(pady=1)
 
-        # Stats frame
+        # Stats frame with compact layout
         stats_frame = ttk.Frame(self)
-        stats_frame.pack(fill='x', padx=10, pady=5)
+        stats_frame.pack(fill="x", padx=8, pady=3)
+
+        # Row 1: Counts
+        count_frame = ttk.Frame(stats_frame)
+        count_frame.pack(fill="x", pady=1)
 
         # Total
-        ttk.Label(stats_frame, text="Total:", font=('', 9)).grid(row=0, column=0, sticky='w')
-        self.total_label = ttk.Label(stats_frame, text="0", font=('', 9, 'bold'))
-        self.total_label.grid(row=0, column=1, sticky='w', padx=5)
+        ttk.Label(count_frame, text="Total:", font=("Segoe UI", 8)).pack(side="left")
+        self.total_label = ttk.Label(
+            count_frame, text="0", font=("Segoe UI", 9, "bold")
+        )
+        self.total_label.pack(side="left", padx=(3, 10))
 
         # Success
-        ttk.Label(stats_frame, text=" OK:", font=('', 9)).grid(row=0, column=2, sticky='w', padx=(20, 0))
-        self.ok_label = ttk.Label(stats_frame, text="0", font=('', 9, 'bold'), foreground='green')
-        self.ok_label.grid(row=0, column=3, sticky='w', padx=5)
+        ttk.Label(count_frame, text="Success:", font=("Segoe UI", 8)).pack(side="left")
+        self.ok_label = ttk.Label(
+            count_frame, text="0", font=("Segoe UI", 9, "bold"), foreground="#2e7d32"
+        )
+        self.ok_label.pack(side="left", padx=(3, 10))
 
         # Failed
-        ttk.Label(stats_frame, text=" NG:", font=('', 9)).grid(row=0, column=4, sticky='w', padx=(20, 0))
-        self.ng_label = ttk.Label(stats_frame, text="0", font=('', 9, 'bold'), foreground='red')
-        self.ng_label.grid(row=0, column=5, sticky='w', padx=5)
+        ttk.Label(count_frame, text="Failed:", font=("Segoe UI", 8)).pack(side="left")
+        self.ng_label = ttk.Label(
+            count_frame, text="0", font=("Segoe UI", 9, "bold"), foreground="#d32f2f"
+        )
+        self.ng_label.pack(side="left", padx=3)
+
+        # Row 2: Time info
+        time_frame = ttk.Frame(stats_frame)
+        time_frame.pack(fill="x", pady=1)
 
         # Time elapsed
-        ttk.Label(stats_frame, text="Time:", font=('', 9)).grid(row=1, column=0, sticky='w', pady=(5, 0))
-        self.time_label = ttk.Label(stats_frame, text="00:00:00", font=('', 9, 'bold'))
-        self.time_label.grid(row=1, column=1, columnspan=2, sticky='w', padx=5, pady=(5, 0))
+        ttk.Label(time_frame, text="Elapsed:", font=("Segoe UI", 8)).pack(side="left")
+        self.time_label = ttk.Label(
+            time_frame, text="00:00:00", font=("Segoe UI", 9, "bold")
+        )
+        self.time_label.pack(side="left", padx=(3, 10))
 
         # ETA
-        ttk.Label(stats_frame, text="ETA:", font=('', 9)).grid(row=1, column=2, sticky='w', padx=(20, 0), pady=(5, 0))
-        self.eta_label = ttk.Label(stats_frame, text="--:--:--", font=('', 9, 'bold'))
-        self.eta_label.grid(row=1, column=3, columnspan=3, sticky='w', padx=5, pady=(5, 0))
+        ttk.Label(time_frame, text="ETA:", font=("Segoe UI", 8)).pack(side="left")
+        self.eta_label = ttk.Label(
+            time_frame, text="--:--:--", font=("Segoe UI", 9, "bold")
+        )
+        self.eta_label.pack(side="left", padx=3)
 
         # Initialize counters
         self.reset()
@@ -83,7 +105,7 @@ class ProgressPanel(ttk.Frame):
         """Update progress with new result."""
         self.ok_count += ok
         self.ng_count += not ok
-        
+
         processed = self.ok_count + self.ng_count
         # Update every 5 items, or if this is the last item
         if processed % 5 == 0 or processed >= self.total:

@@ -1,42 +1,94 @@
-"""
-Agent Module - Device interaction and OCR with enhanced performance.
-"""
+"""Agent Module - Device interaction and OCR with enhanced performance."""
+
 import time
+from typing import List, Optional, Tuple, Union
+
 import cv2
 import numpy as np
-import oneocr
-from typing import Optional, Tuple, List, Union
 from airtest.core.api import connect_device, touch
 from airtest.core.error import AirtestError
+
+import core.oneocr_optimized as oneocr
+
+from .config import (DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY,
+                     DEFAULT_TOUCH_TIMES)
 from .utils import get_logger
-from .config import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY, DEFAULT_TOUCH_TIMES
 
 # ==================== OCR ENGINE ENHANCEMENT ====================
 
+
 class EnhancedOcrEngine(oneocr.OcrEngine):
-    """Enhanced OCR engine with direct NumPy array processing for better performance."""
-    
+    """Enhanced OCR engine with direct NumPy array processing for better performance.
+
+    This class extends the optimized OcrEngine to process images directly from NumPy arrays,
+    eliminating the overhead of encoding/decoding operations while maintaining thread safety.
+    """
+
     def recognize(self, image_array: np.ndarray) -> dict:
-        """Process image from NumPy array efficiently without encode/decode overhead."""
-        if any(x < 50 or x > 10000 for x in image_array.shape[:2]):
-            return {**self.empty_result, 'error': 'Unsupported image size'}
-        
+        """Process image from NumPy array efficiently without encode/decode overhead.
+
+        Args:
+            image_array: Input image as NumPy array (height, width, channels).
+
+        Returns:
+            dict: OCR recognition result containing detected text and bounding boxes.
+                Returns empty result with error message if image size is invalid.
+        """
+        if not self._initialized:
+            return self._error_result("OCR engine not initialized")
+
+        # Validate image size
+        height, width = image_array.shape[:2]
+        error = self._validate_image_size(width, height)
+        if error:
+            return self._error_result(error)
+
+        # Convert to BGRA format
         channels = image_array.shape[2] if len(image_array.shape) == 3 else 1
-        conversions = {1: cv2.COLOR_GRAY2BGRA, 3: cv2.COLOR_BGR2BGRA}
-        img_bgra = cv2.cvtColor(image_array, conversions[channels]) if channels in conversions else image_array
-        
-        width = img_bgra.shape[1]
-        return self._process_image(cols=width, rows=img_bgra.shape[0], 
-                                   step=width * 4, data=img_bgra.ctypes.data)
+        if channels == 1:
+            img_bgra = cv2.cvtColor(image_array, cv2.COLOR_GRAY2BGRA)
+        elif channels == 3:
+            img_bgra = cv2.cvtColor(image_array, cv2.COLOR_BGR2BGRA)
+        else:
+            return self._error_result(f"Unsupported channel count: {channels}")
+
+        # Process with thread safety
+        with self._lock:
+            return self._process_image(
+                cols=img_bgra.shape[1],
+                rows=img_bgra.shape[0],
+                step=img_bgra.shape[1] * 4,
+                data=img_bgra.ctypes.data,
+            )
+
 
 # ==================== AGENT CLASS ====================
 
-class Agent:
-    """Agent for device interaction via Airtest and OCR processing."""
 
-    def __init__(self, device_url: str = "Windows:///?title_re=DOAX VenusVacation.*", 
-                 enable_retry: bool = True, auto_connect: bool = True):
-        """Initialize Agent with device connection and OCR engine."""
+class Agent:
+    """Agent for device interaction via Airtest and OCR processing.
+
+    This class provides a unified interface for interacting with devices through Airtest
+    and performing OCR operations. It handles device connection, screenshot capture,
+    and text recognition with automatic retry capabilities.
+    """
+
+    def __init__(
+        self,
+        device_url: str = "Windows:///?title_re=DOAX VenusVacation.*",
+        enable_retry: bool = True,
+        auto_connect: bool = True,
+    ):
+        """Initialize Agent with device connection and OCR engine.
+
+        Args:
+            device_url: Device connection URL for Airtest (e.g., Windows:///...).
+            enable_retry: Enable automatic retry on connection failure.
+            auto_connect: Automatically connect to device on initialization.
+
+        Raises:
+            RuntimeError: If agent initialization or device connection fails.
+        """
         self.logger = get_logger(__name__)
         self.device = None
         self.ocr_engine = None
@@ -61,13 +113,27 @@ class Agent:
             self.logger.error(f"Agent initialization failed: {e}")
             raise RuntimeError(f"Agent initialization failed: {e}") from e
 
-    def connect_device_with_retry(self, device_url: str = "Windows:///?title_re=DOAX VenusVacation.*",
-                                  max_retries: int = DEFAULT_MAX_RETRIES,
-                                  retry_delay: float = DEFAULT_RETRY_DELAY) -> bool:
-        """Connect to device with automatic retry on failure."""
+    def connect_device_with_retry(
+        self,
+        device_url: str = "Windows:///?title_re=DOAX VenusVacation.*",
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        retry_delay: float = DEFAULT_RETRY_DELAY,
+    ) -> bool:
+        """Connect to device with automatic retry on failure.
+
+        Args:
+            device_url: Device connection URL for Airtest.
+            max_retries: Maximum number of retry attempts (default: 3).
+            retry_delay: Delay between retries in seconds (default: 1.0).
+
+        Returns:
+            bool: True if connection successful and verified, False otherwise.
+        """
         for attempt in range(max_retries):
             try:
-                self.logger.info(f"Connecting to device (attempt {attempt + 1}/{max_retries})...")
+                self.logger.info(
+                    f"Connecting to device (attempt {attempt + 1}/{max_retries})..."
+                )
                 self.device = connect_device(device_url)
 
                 if self._verify_device():
@@ -89,9 +155,13 @@ class Agent:
         return False
 
     def _verify_device(self) -> bool:
-        """Verify device is working properly."""
+        """Verify device is working properly by checking snapshot capability.
+
+        Returns:
+            bool: True if device is functional and can take screenshots, False otherwise.
+        """
         try:
-            if self.device and hasattr(self.device, 'snapshot'):
+            if self.device and hasattr(self.device, "snapshot"):
                 self._device_verified = True
                 return True
             return False
@@ -99,22 +169,30 @@ class Agent:
             return False
 
     def is_device_connected(self) -> bool:
-        """Check if device is connected and functional."""
+        """Check if device is connected and functional.
+
+        Returns:
+            bool: True if device is connected and verified, False otherwise.
+        """
         if not self.device:
             self._device_verified = False
             return False
         return self._device_verified or self._verify_device()
 
     def snapshot(self) -> Optional[np.ndarray]:
-        """Capture full screen screenshot."""
+        """Capture full screen screenshot from connected device.
+
+        Returns:
+            Optional[np.ndarray]: Screenshot as NumPy array (BGR format), or None if failed.
+        """
         if not self.is_device_connected():
             self.logger.error("Device not connected")
             return None
-            
+
         if self.device is None:
             self.logger.error("Device is None")
             return None
-            
+
         try:
             return self.device.snapshot()
         except Exception as e:
@@ -122,21 +200,37 @@ class Agent:
             self._device_verified = False
             return None
 
-    def snapshot_region(self, region: Tuple[int, int, int, int]) -> Optional[np.ndarray]:
-        """Capture screenshot of specific region (x1, y1, x2, y2)."""
+    def snapshot_region(
+        self, region: Tuple[int, int, int, int]
+    ) -> Optional[np.ndarray]:
+        """Capture screenshot of specific region.
+
+        Args:
+            region: Region coordinates as (x1, y1, x2, y2) in pixels.
+
+        Returns:
+            Optional[np.ndarray]: Cropped screenshot as NumPy array, or None if failed.
+        """
         x1, y1, x2, y2 = region
         if x1 >= x2 or y1 >= y2:
             self.logger.error(f"Invalid region: {region}")
             return None
-        
+
         full_screenshot = self.snapshot()
         if full_screenshot is None:
             return None
-        
+
         return full_screenshot[y1:y2, x1:x2]
 
     def ocr(self, region: Optional[Tuple[int, int, int, int]] = None) -> Optional[dict]:
-        """Perform OCR on full screen or specified region."""
+        """Perform OCR on full screen or specified region.
+
+        Args:
+            region: Optional region coordinates as (x1, y1, x2, y2). If None, performs OCR on full screen.
+
+        Returns:
+            Optional[dict]: OCR result dictionary containing text and bounding boxes, or None if failed.
+        """
         if not self.ocr_engine:
             self.logger.error("OCR engine not initialized")
             return None
@@ -152,9 +246,20 @@ class Agent:
             self.logger.error(f"OCR recognition failed: {e}")
             return None
 
-    def safe_touch(self, pos: Union[Tuple[float, float], List[float]],
-                   times: int = DEFAULT_TOUCH_TIMES) -> bool:
-        """Safely touch screen at position with error handling."""
+    def safe_touch(
+        self,
+        pos: Union[Tuple[float, float], List[float]],
+        times: int = DEFAULT_TOUCH_TIMES,
+    ) -> bool:
+        """Safely touch screen at position with error handling.
+
+        Args:
+            pos: Touch position as (x, y) tuple or list of two floats.
+            times: Number of times to touch (default: 1).
+
+        Returns:
+            bool: True if touch successful, False otherwise.
+        """
         if not self.is_device_connected():
             self.logger.error("Device not connected")
             return False

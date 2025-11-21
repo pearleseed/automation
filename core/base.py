@@ -5,38 +5,53 @@ This module provides shared methods used by Festival, Gacha, and Hopping automat
 """
 
 import os
-import cv2
-from typing import Dict, List, Optional, Any, Callable
-from airtest.core.api import Template, exists, sleep
 from enum import Enum
+from typing import Any, Callable, Dict, List, Optional
+
+import cv2
+from airtest.core.api import Template, exists, sleep
 
 from .agent import Agent
-from .utils import get_logger, ensure_directory
-from .detector import TextProcessor
 from .config import DEFAULT_TOUCH_TIMES
-
+from .detector import TextProcessor
+from .utils import ensure_directory, get_logger
 
 logger = get_logger(__name__)
 
 
 class CancellationError(Exception):
     """Exception raised when automation is cancelled."""
+
     pass
 
 
 class StepResult(Enum):
     """Result of a step execution."""
+
     SUCCESS = "success"
     FAILED = "failed"
     SKIPPED = "skipped"
 
 
 class ExecutionStep:
-    """Encapsulates a single execution step with retry logic and cancellation support."""
-    
-    def __init__(self, step_num: int, name: str, action: Callable, max_retries: int = 5,
-                 retry_delay: float = 1.0, optional: bool = False, post_delay: float = 0.5,
-                 cancel_checker: Optional[Callable] = None, logger: Optional[Any] = None):
+    """Encapsulates a single execution step with retry logic and cancellation support.
+
+    This class provides a structured way to execute automation steps with automatic
+    retry on failure, cancellation checking, and detailed logging.
+    """
+
+    def __init__(
+        self,
+        step_num: int,
+        name: str,
+        action: Callable,
+        max_retries: int = 5,
+        retry_delay: float = 1.0,
+        optional: bool = False,
+        post_delay: float = 0.5,
+        cancel_checker: Optional[Callable] = None,
+        logger: Optional[Any] = None,
+    ):
         self.step_num = step_num
         self.name = name
         self.action = action
@@ -46,85 +61,122 @@ class ExecutionStep:
         self.post_delay = post_delay
         self.cancel_checker = cancel_checker
         self.logger = logger or get_logger(__name__)
-        self.result = None
+        self.result: Optional[StepResult] = None
         self.error_message = ""
-    
+
     def execute(self) -> StepResult:
-        """Execute the step with retry logic."""
+        """Execute the step with retry logic and cancellation checking.
+
+        Returns:
+            StepResult: SUCCESS if step completed successfully, FAILED if all retries exhausted,
+                       SKIPPED if step is optional and failed.
+        """
         if self.cancel_checker:
             self.cancel_checker(self.name)
-        
-        if hasattr(self.logger, 'step') and callable(getattr(self.logger, 'step', None)):
-            getattr(self.logger, 'step')(self.step_num, self.name)
+
+        if hasattr(self.logger, "step") and callable(
+            getattr(self.logger, "step", None)
+        ):
+            getattr(self.logger, "step")(self.step_num, self.name)
         else:
             self.logger.info(f"[STEP {self.step_num:2d}] {self.name}")
         for attempt in range(1, self.max_retries + 1):
             if self.cancel_checker:
                 self.cancel_checker(self.name)
-            
+
             try:
                 result = self.action()
-                
+
                 if result:
                     self.result = StepResult.SUCCESS
-                    if hasattr(self.logger, 'step_success') and callable(getattr(self.logger, 'step_success', None)):
-                        getattr(self.logger, 'step_success')(self.step_num, self.name)
+                    if hasattr(self.logger, "step_success") and callable(
+                        getattr(self.logger, "step_success", None)
+                    ):
+                        getattr(self.logger, "step_success")(self.step_num, self.name)
                     else:
-                        self.logger.info(f"[STEP {self.step_num:2d}] ✓ {self.name} - SUCCESS")
-                    
+                        self.logger.info(
+                            f"[STEP {self.step_num:2d}] ✓ {self.name} - SUCCESS"
+                        )
+
                     if self.post_delay > 0:
                         sleep(self.post_delay)
-                    
+
                     return StepResult.SUCCESS
-                
+
                 if attempt < self.max_retries:
-                    if hasattr(self.logger, 'step_retry') and callable(getattr(self.logger, 'step_retry', None)):
-                        getattr(self.logger, 'step_retry')(self.step_num, self.name, attempt, self.max_retries)
+                    if hasattr(self.logger, "step_retry") and callable(
+                        getattr(self.logger, "step_retry", None)
+                    ):
+                        getattr(self.logger, "step_retry")(
+                            self.step_num, self.name, attempt, self.max_retries
+                        )
                     else:
-                        self.logger.warning(f"[STEP {self.step_num:2d}] {self.name} - RETRY {attempt}/{self.max_retries}")
+                        self.logger.warning(
+                            f"[STEP {self.step_num:2d}] {self.name} - RETRY {attempt}/{self.max_retries}"
+                        )
                     sleep(self.retry_delay)
-                    
+
             except CancellationError:
                 raise
             except Exception as e:
                 self.error_message = str(e)
                 if attempt < self.max_retries:
-                    self.logger.warning(f"[STEP {self.step_num:2d}] {self.name} - Error: {e}, retrying...")
+                    self.logger.warning(
+                        f"[STEP {self.step_num:2d}] {self.name} - Error: {e}, retrying..."
+                    )
                     sleep(self.retry_delay)
                 else:
                     break
         if self.optional:
             self.result = StepResult.SKIPPED
-            self.logger.info(f"[STEP {self.step_num:2d}] {self.name} - SKIPPED (optional)")
+            self.logger.info(
+                f"[STEP {self.step_num:2d}] {self.name} - SKIPPED (optional)"
+            )
             return StepResult.SKIPPED
-        
+
         self.result = StepResult.FAILED
         error_info = f" | {self.error_message}" if self.error_message else ""
-        if hasattr(self.logger, 'step_failed') and callable(getattr(self.logger, 'step_failed', None)):
-            getattr(self.logger, 'step_failed')(self.step_num, self.name, self.error_message)
+        if hasattr(self.logger, "step_failed") and callable(
+            getattr(self.logger, "step_failed", None)
+        ):
+            getattr(self.logger, "step_failed")(
+                self.step_num, self.name, self.error_message
+            )
         else:
-            self.logger.error(f"[STEP {self.step_num:2d}] ✗ {self.name} - FAILED{error_info}")
+            self.logger.error(
+                f"[STEP {self.step_num:2d}] ✗ {self.name} - FAILED{error_info}"
+            )
         return StepResult.FAILED
 
 
 class BaseAutomation:
-    """Base class for all automation modules with common functionality."""
+    """Base class for all automation modules with common functionality.
 
-    def __init__(self, agent: Agent, config: Dict[str, Any], roi_config_dict: Dict[str, list], cancel_event=None):
+    This class provides shared methods for Festival, Gacha, and Hopping automations,
+    including template matching, OCR processing, screenshot capture, and cancellation support.
+    """
+
+    def __init__(
+        self,
+        agent: Agent,
+        config: Dict[str, Any],
+        roi_config_dict: Dict[str, list],
+        cancel_event=None,
+    ):
         self.agent = agent
         self.roi_config_dict = roi_config_dict
         self.cancel_event = cancel_event
-        self.templates_path = config['templates_path']
-        self.snapshot_dir = config['snapshot_dir']
-        self.results_dir = config['results_dir']
-        self.wait_after_touch = config['wait_after_touch']
+        self.templates_path = config["templates_path"]
+        self.snapshot_dir = config["snapshot_dir"]
+        self.results_dir = config["results_dir"]
+        self.wait_after_touch = config["wait_after_touch"]
         ensure_directory(self.snapshot_dir)
         ensure_directory(self.results_dir)
-    
+
     def is_cancelled(self) -> bool:
         """Check if cancellation was requested."""
         return self.cancel_event is not None and self.cancel_event.is_set()
-    
+
     def check_cancelled(self, context: str = ""):
         """Check cancellation and raise CancellationError if cancelled."""
         if self.is_cancelled():
@@ -132,17 +184,31 @@ class BaseAutomation:
             logger.info(msg)
             raise CancellationError(msg)
 
-    def touch_template(self, template_name: str, optional: bool = False, times: int = DEFAULT_TOUCH_TIMES) -> bool:
-        """Touch template image (optional: True if not found ok, times: repeat count)."""
+    def touch_template(
+        self,
+        template_name: str,
+        optional: bool = False,
+        times: int = DEFAULT_TOUCH_TIMES,
+    ) -> bool:
+        """Touch template image on screen with cancellation support.
+
+        Args:
+            template_name: Name of template image file in templates directory.
+            optional: If True, returns True even if template not found (default: False).
+            times: Number of times to touch the template (default: 1).
+
+        Returns:
+            bool: True if template found and touched successfully, or if optional=True.
+        """
         try:
             self.check_cancelled(f"touch_template({template_name})")
-            
+
             template_path = os.path.join(self.templates_path, template_name)
             if not os.path.exists(template_path) or self.agent.device is None:
                 if self.agent.device is None:
                     logger.error("Device not connected")
                 return optional
-            
+
             pos = exists(Template(template_path))
             if not pos:
                 return optional
@@ -150,11 +216,13 @@ class BaseAutomation:
             for i in range(times):
                 self.check_cancelled(f"touch_template({template_name})")
                 self.agent.safe_touch(pos)
-                log_msg = f"✓ {template_name}" + (f" (touch #{i+1}/{times})" if times > 1 else "")
+                log_msg = f"✓ {template_name}" + (
+                    f" (touch #{i+1}/{times})" if times > 1 else ""
+                )
                 logger.info(log_msg)
                 if i < times - 1:
                     sleep(self.wait_after_touch * 0.5)
-            
+
             sleep(self.wait_after_touch)
             return True
 
@@ -165,8 +233,12 @@ class BaseAutomation:
                 logger.error(f"✗ {template_name}: {e}")
             return optional
 
-    def touch_template_while_exists(self, template_name: str, max_attempts: int = 5, 
-                                   delay_between_touches: float = 0.3) -> int:
+    def touch_template_while_exists(
+        self,
+        template_name: str,
+        max_attempts: int = 5,
+        delay_between_touches: float = 0.3,
+    ) -> int:
         """Touch template repeatedly while it exists (returns touch count)."""
         touch_count = 0
         try:
@@ -174,28 +246,30 @@ class BaseAutomation:
             if not os.path.exists(template_path) or self.agent.device is None:
                 logger.debug(f"Template not found: {template_name}")
                 return 0
-            
+
             template = Template(template_path)
             for _ in range(max_attempts):
                 self.check_cancelled(f"touch_template_while_exists({template_name})")
                 pos = exists(template)
                 if not pos:
                     break
-                
+
                 self.agent.safe_touch(pos)
                 touch_count += 1
                 logger.info(f"✓ {template_name} (touch #{touch_count})")
                 sleep(delay_between_touches)
-            
+
             if touch_count > 0:
                 logger.info(f"✓ Touched {template_name} {touch_count} time(s)")
             else:
                 logger.debug(f"✓ {template_name} not found")
-            
+
             return touch_count
 
         except CancellationError:
-            logger.info(f"Cancelled during touch_template_while_exists({template_name})")
+            logger.info(
+                f"Cancelled during touch_template_while_exists({template_name})"
+            )
             return touch_count
         except Exception as e:
             logger.error(f"✗ touch_template_while_exists({template_name}): {e}")
@@ -205,7 +279,7 @@ class BaseAutomation:
         """Get screenshot (use cached or take new)."""
         if screenshot is not None:
             return screenshot
-        
+
         screenshot = self.agent.snapshot()
         if screenshot is None:
             logger.error("Cannot get screenshot")
@@ -225,12 +299,12 @@ class BaseAutomation:
             return None
 
         x1, x2, y1, y2 = roi_config  # [x1, x2, y1, y2]
-        
+
         roi_image = screenshot[y1:y2, x1:x2]
         if roi_image is None or roi_image.size == 0:
             logger.warning(f"✗ ROI '{roi_name}': Invalid crop")
             return None
-        
+
         return roi_image
 
     def snapshot_and_save(self, folder_name: str, filename: str) -> Optional[Any]:
@@ -274,7 +348,7 @@ class BaseAutomation:
                 logger.warning(f"✗ ROI '{roi_name}': OCR failed")
                 return ""
 
-            text = self._clean_ocr_text(ocr_result.get('text', '').strip())
+            text = self._clean_ocr_text(ocr_result.get("text", "").strip())
             logger.debug(f"ROI '{roi_name}': '{text}'")
             return text
 
@@ -290,11 +364,12 @@ class BaseAutomation:
         # Use TextProcessor for consistent text cleaning
         cleaned = TextProcessor.clean_ocr_artifacts(text)
         # Additional normalization: remove newlines and normalize spaces
-        cleaned = cleaned.replace('\n', ' ').replace('\r', '')
-        return ' '.join(cleaned.split()).strip()
+        cleaned = cleaned.replace("\n", " ").replace("\r", "")
+        return " ".join(cleaned.split()).strip()
 
-    def scan_screen_roi(self, screenshot: Optional[Any] = None,
-                       roi_names: Optional[List[str]] = None) -> Dict[str, Any]:
+    def scan_screen_roi(
+        self, screenshot: Optional[Any] = None, roi_names: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """Scan multiple ROI regions and return OCR results dict."""
         try:
             # Get screenshot using helper
@@ -324,43 +399,53 @@ class BaseAutomation:
             logger.error(f"✗ Scan screen ROI: {e}")
             return {}
 
-    def find_text(self, ocr_results: List[Dict[str, Any]], search_text: str, 
-                  threshold: float = 0.7, use_fuzzy: bool = True) -> Optional[Dict[str, Any]]:
+    def find_text(
+        self,
+        ocr_results: List[Dict[str, Any]],
+        search_text: str,
+        threshold: float = 0.7,
+        use_fuzzy: bool = True,
+    ) -> Optional[Dict[str, Any]]:
         """Find text in OCR results (use_fuzzy: similarity matching)."""
         if not ocr_results or not search_text:
             return None
-        
+
         if use_fuzzy:
             best_match, best_similarity = None, 0.0
-            
+
             for result in ocr_results:
-                ocr_text = result.get('text', '')
+                ocr_text = result.get("text", "")
                 if not ocr_text:
                     continue
-                
+
                 similarity = TextProcessor.calculate_similarity(
                     TextProcessor.normalize_text(ocr_text),
-                    TextProcessor.normalize_text(search_text)
+                    TextProcessor.normalize_text(search_text),
                 )
-                
+
                 normalized_ocr = TextProcessor.normalize_text(ocr_text)
                 normalized_search = TextProcessor.normalize_text(search_text)
-                if normalized_search in normalized_ocr or normalized_ocr in normalized_search:
+                if (
+                    normalized_search in normalized_ocr
+                    or normalized_ocr in normalized_search
+                ):
                     similarity = max(similarity, 0.9)
-                
+
                 if similarity > best_similarity and similarity >= threshold:
                     best_similarity = similarity
                     best_match = result
-                    best_match['similarity'] = similarity
-            
+                    best_match["similarity"] = similarity
+
             if best_match:
-                logger.debug(f"Fuzzy match: '{best_match.get('text')}' ~ '{search_text}' (similarity: {best_similarity:.2f})")
+                logger.debug(
+                    f"Fuzzy match: '{best_match.get('text')}' ~ '{search_text}' (similarity: {best_similarity:.2f})"
+                )
             return best_match
         else:
             search_lower = search_text.lower().strip()
             for result in ocr_results:
-                if search_lower in result.get('text', '').lower():
-                    result['similarity'] = 1.0
+                if search_lower in result.get("text", "").lower():
+                    result["similarity"] = 1.0
                     return result
             return None
 
@@ -382,17 +467,17 @@ class BaseAutomation:
                 return []
 
             # Parse individual lines from OCR result
-            lines = ocr_result.get('lines', [])
+            lines = ocr_result.get("lines", [])
             results = []
 
             for line in lines:
-                text = line.get('text', '').strip()
-                bbox = line.get('bounding_rect', {})
+                text = line.get("text", "").strip()
+                bbox = line.get("bounding_rect", {})
                 if text and bbox:
                     # Coordinates are relative to region, convert to absolute screen coordinates
-                    center_x = (bbox.get('x1', 0) + bbox.get('x3', 0)) / 2 + x1
-                    center_y = (bbox.get('y1', 0) + bbox.get('y3', 0)) / 2 + y1
-                    results.append({'text': text, 'center': (center_x, center_y)})
+                    center_x = (bbox.get("x1", 0) + bbox.get("x3", 0)) / 2 + x1
+                    center_y = (bbox.get("y1", 0) + bbox.get("y3", 0)) / 2 + y1
+                    results.append({"text": text, "center": (center_x, center_y)})
 
             logger.debug(f"✓ ROI '{roi_name}': Found {len(results)} texts")
             return results
@@ -401,14 +486,31 @@ class BaseAutomation:
             logger.error(f"✗ OCR ROI with lines '{roi_name}': {e}")
             return []
 
-    def find_and_touch_in_roi(self, roi_name: str, search_text: str,
-                              threshold: float = 0.7, use_fuzzy: bool = True) -> bool:
-        """Find and touch text in ROI (use_fuzzy: similarity matching)."""
+    def find_and_touch_in_roi(
+        self,
+        roi_name: str,
+        search_text: str,
+        threshold: float = 0.7,
+        use_fuzzy: bool = True,
+    ) -> bool:
+        """Find and touch text in specified ROI region using OCR.
+
+        Args:
+            roi_name: Name of ROI region defined in ROI config.
+            search_text: Text to search for in the ROI.
+            threshold: Similarity threshold for fuzzy matching (0.0-1.0, default: 0.7).
+            use_fuzzy: Enable fuzzy text matching (default: True).
+
+        Returns:
+            bool: True if text found and touched successfully, False otherwise.
+        """
         try:
             self.check_cancelled(f"find_and_touch_in_roi({roi_name}, {search_text})")
 
             match_type = "fuzzy" if use_fuzzy else "exact"
-            logger.info(f"Find & touch '{search_text}' in ROI '{roi_name}' ({match_type} matching)")
+            logger.info(
+                f"Find & touch '{search_text}' in ROI '{roi_name}' ({match_type} matching)"
+            )
 
             # OCR the ROI to get list of texts with coordinates
             ocr_results = self.ocr_roi_with_lines(roi_name)
@@ -418,32 +520,44 @@ class BaseAutomation:
                 return False
 
             # Log OCR results for debugging
-            logger.debug(f"OCR found {len(ocr_results)} text(s) in ROI '{roi_name}': {[r.get('text', '') for r in ocr_results]}")
+            logger.debug(
+                f"OCR found {len(ocr_results)} text(s) in ROI '{roi_name}': {[r.get('text', '') for r in ocr_results]}"
+            )
 
             self.check_cancelled(f"find_and_touch_in_roi({roi_name}, {search_text})")
 
             # Find the text in results using fuzzy matching
-            text_info = self.find_text(ocr_results, search_text, threshold=threshold, use_fuzzy=use_fuzzy)
+            text_info = self.find_text(
+                ocr_results, search_text, threshold=threshold, use_fuzzy=use_fuzzy
+            )
 
             if text_info:
-                self.check_cancelled(f"find_and_touch_in_roi({roi_name}, {search_text})")
-                
-                matched_text = text_info.get('text', '')
-                similarity = text_info.get('similarity', 1.0)
-                
+                self.check_cancelled(
+                    f"find_and_touch_in_roi({roi_name}, {search_text})"
+                )
+
+                matched_text = text_info.get("text", "")
+                similarity = text_info.get("similarity", 1.0)
+
                 if use_fuzzy:
-                    logger.info(f"✓ Found '{matched_text}' ~ '{search_text}' in ROI '{roi_name}' "
-                              f"(similarity: {similarity:.2f}) at {text_info['center']}")
+                    logger.info(
+                        f"✓ Found '{matched_text}' ~ '{search_text}' in ROI '{roi_name}' "
+                        f"(similarity: {similarity:.2f}) at {text_info['center']}"
+                    )
                 else:
-                    logger.info(f"✓ Found '{matched_text}' in ROI '{roi_name}' at {text_info['center']}")
-                
-                success = self.agent.safe_touch(text_info['center'])
+                    logger.info(
+                        f"✓ Found '{matched_text}' in ROI '{roi_name}' at {text_info['center']}"
+                    )
+
+                success = self.agent.safe_touch(text_info["center"])
                 if success:
                     sleep(self.wait_after_touch)
                 return success
 
-            logger.warning(f"✗ Text '{search_text}' not found in ROI '{roi_name}' "
-                         f"(threshold: {threshold:.2f}, fuzzy: {use_fuzzy})")
+            logger.warning(
+                f"✗ Text '{search_text}' not found in ROI '{roi_name}' "
+                f"(threshold: {threshold:.2f}, fuzzy: {use_fuzzy})"
+            )
             return False
 
         except CancellationError:

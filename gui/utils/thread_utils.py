@@ -4,7 +4,8 @@ Thread Management Utilities for GUI Operations
 
 import threading
 import time
-from typing import Callable, Any, Optional, Dict, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
+
 from core.utils import get_logger
 
 logger = get_logger(__name__)
@@ -13,8 +14,14 @@ logger = get_logger(__name__)
 class CancellableThread:
     """A thread that supports cancellation and proper cleanup."""
 
-    def __init__(self, target: Callable, args: tuple = (), kwargs: Optional[Dict] = None,
-                 name: Optional[str] = None, daemon: bool = True):
+    def __init__(
+        self,
+        target: Callable,
+        args: tuple = (),
+        kwargs: Optional[Dict] = None,
+        name: Optional[str] = None,
+        daemon: bool = True,
+    ):
         self.target = target
         self.args = args
         self.kwargs = kwargs or {}
@@ -39,9 +46,7 @@ class CancellableThread:
         self.is_running = True
 
         self.thread = threading.Thread(
-            target=self._run_wrapper,
-            name=self.name,
-            daemon=self.daemon
+            target=self._run_wrapper, name=self.name, daemon=self.daemon
         )
         self.thread.start()
         logger.debug(f"Started thread: {self.name}")
@@ -101,7 +106,11 @@ class CancellableThread:
 
 
 class ThreadManager:
-    """Manager for background threads with automatic cleanup."""
+    """Manager for background threads with automatic cleanup and cancellation support.
+
+    This class manages multiple background threads, providing task submission,
+    cancellation, result retrieval, and automatic cleanup of finished threads.
+    """
 
     def __init__(self, max_workers: int = 4):
         self.max_workers = max_workers
@@ -113,7 +122,9 @@ class ThreadManager:
         self.cleanup_thread = threading.Thread(target=self._cleanup_worker, daemon=True)
         self.cleanup_thread.start()
 
-    def submit_task(self, task_id: str, target: Callable, *args, **kwargs) -> Optional[CancellableThread]:
+    def submit_task(
+        self, task_id: str, target: Callable, *args, **kwargs
+    ) -> Optional[CancellableThread]:
         """Submit a cancellable task."""
         with self.lock:
             if self._shutdown:
@@ -184,7 +195,8 @@ class ThreadManager:
             with self.lock:
                 # Remove finished threads
                 finished_tasks = [
-                    task_id for task_id, thread in self.active_threads.items()
+                    task_id
+                    for task_id, thread in self.active_threads.items()
                     if not thread.is_alive() and thread.finished_event.is_set()
                 ]
 
@@ -206,12 +218,14 @@ class ThreadManager:
 # Global thread manager instance
 _thread_manager = None
 
+
 def get_thread_manager() -> ThreadManager:
     """Get the global thread manager instance."""
     global _thread_manager
     if _thread_manager is None:
         _thread_manager = ThreadManager()
     return _thread_manager
+
 
 def shutdown_thread_manager():
     """Shutdown the global thread manager."""

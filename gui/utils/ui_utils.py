@@ -2,28 +2,45 @@
 Common UI Utilities for GUI Components
 """
 
-import tkinter as tk
-from tkinter import filedialog, messagebox
 import json
 import os
-from typing import Dict, Any, Optional, Callable
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from typing import Any, Callable, Dict, Optional
+
 from core.utils import get_logger
 
 logger = get_logger(__name__)
 
 
 class UIUtils:
-    """Utility class for common UI operations."""
+    """Utility class for common UI operations and dialogs.
+
+    This class provides static methods for file/directory browsing, input validation,
+    configuration management, and common UI operations used across the application.
+    """
 
     @staticmethod
-    def browse_file(parent: tk.Widget, title: str, filetypes: list, initial_dir: str = "") -> Optional[str]:
-        """Common file browsing dialog with error handling."""
+    def browse_file(
+        parent: tk.Widget, title: str, filetypes: list, initial_dir: str = ""
+    ) -> Optional[str]:
+        """Open file browsing dialog with error handling.
+
+        Args:
+            parent: Parent widget for the dialog.
+            title: Dialog window title.
+            filetypes: List of file type filters (e.g., [("CSV files", "*.csv")]).
+            initial_dir: Initial directory to open (default: current directory).
+
+        Returns:
+            Optional[str]: Selected file path, or None if cancelled or error occurred.
+        """
         try:
             filename = filedialog.askopenfilename(
                 parent=parent,
                 title=title,
                 filetypes=filetypes,
-                initialdir=initial_dir or None
+                initialdir=initial_dir or None,
             )
             if filename:
                 logger.info(f"Selected file: {filename}")
@@ -34,13 +51,13 @@ class UIUtils:
         return None
 
     @staticmethod
-    def browse_directory(parent: tk.Widget, title: str, initial_dir: str = "") -> Optional[str]:
+    def browse_directory(
+        parent: tk.Widget, title: str, initial_dir: str = ""
+    ) -> Optional[str]:
         """Common directory browsing dialog with error handling."""
         try:
             directory = filedialog.askdirectory(
-                parent=parent,
-                title=title,
-                initialdir=initial_dir or None
+                parent=parent, title=title, initialdir=initial_dir or None
             )
             if directory:
                 logger.info(f"Selected directory: {directory}")
@@ -51,8 +68,12 @@ class UIUtils:
         return None
 
     @staticmethod
-    def save_file(parent: tk.Widget, title: str, defaultextension: str = "",
-                  filetypes: Optional[list] = None) -> Optional[str]:
+    def save_file(
+        parent: tk.Widget,
+        title: str,
+        defaultextension: str = "",
+        filetypes: Optional[list] = None,
+    ) -> Optional[str]:
         """Common save file dialog with error handling."""
         if filetypes is None:
             filetypes = [("All files", "*.*")]
@@ -62,7 +83,7 @@ class UIUtils:
                 parent=parent,
                 title=title,
                 defaultextension=defaultextension,
-                filetypes=filetypes
+                filetypes=filetypes,
             )
             if filename:
                 logger.info(f"Save file selected: {filename}")
@@ -73,16 +94,24 @@ class UIUtils:
         return None
 
     @staticmethod
-    def validate_numeric_input(value: str, min_val: Optional[float] = None, max_val: Optional[float] = None,
-                             default: float = 0.0) -> float:
+    def validate_numeric_input(
+        value: str,
+        min_val: Optional[float] = None,
+        max_val: Optional[float] = None,
+        default: float = 0.0,
+    ) -> float:
         """Validate numeric input with bounds checking."""
         try:
             num = float(value)
             if min_val is not None and num < min_val:
-                logger.warning(f"Value {num} below minimum {min_val}, using minimum value")
+                logger.warning(
+                    f"Value {num} below minimum {min_val}, using minimum value"
+                )
                 return min_val
             if max_val is not None and num > max_val:
-                logger.warning(f"Value {num} above maximum {max_val}, using maximum value")
+                logger.warning(
+                    f"Value {num} above maximum {max_val}, using maximum value"
+                )
                 return max_val
             return num
         except (ValueError, TypeError):
@@ -90,16 +119,24 @@ class UIUtils:
             return default
 
     @staticmethod
-    def validate_integer_input(value: str, min_val: Optional[int] = None, max_val: Optional[int] = None,
-                             default: int = 0) -> int:
+    def validate_integer_input(
+        value: str,
+        min_val: Optional[int] = None,
+        max_val: Optional[int] = None,
+        default: int = 0,
+    ) -> int:
         """Validate integer input with bounds checking."""
         try:
             num = int(float(value))  # Handle float strings like "1.0"
             if min_val is not None and num < min_val:
-                logger.warning(f"Value {num} below minimum {min_val}, using minimum value")
+                logger.warning(
+                    f"Value {num} below minimum {min_val}, using minimum value"
+                )
                 return min_val
             if max_val is not None and num > max_val:
-                logger.warning(f"Value {num} above maximum {max_val}, using maximum value")
+                logger.warning(
+                    f"Value {num} above maximum {max_val}, using maximum value"
+                )
                 return max_val
             return num
         except (ValueError, TypeError):
@@ -107,16 +144,24 @@ class UIUtils:
             return default
 
     @staticmethod
-    def save_config_to_file(parent: tk.Widget, config: Dict[str, Any], title: str = "Save config",
-                           defaultextension: str = ".json") -> bool:
+    def save_config_to_file(
+        parent: tk.Widget,
+        config: Dict[str, Any],
+        title: str = "Save config",
+        defaultextension: str = ".json",
+    ) -> bool:
         """Save configuration to JSON file with error handling."""
-        filename = UIUtils.save_file(parent, title, defaultextension,
-                                   [("JSON files", "*.json"), ("All files", "*.*")])
+        filename = UIUtils.save_file(
+            parent,
+            title,
+            defaultextension,
+            [("JSON files", "*.json"), ("All files", "*.*")],
+        )
         if not filename:
             return False
 
         try:
-            with open(filename, 'w', encoding='utf-8') as f:
+            with open(filename, "w", encoding="utf-8") as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
             messagebox.showinfo("Success", f"Config saved to:\n{filename}")
             logger.info(f"Config saved: {filename}")
@@ -127,15 +172,18 @@ class UIUtils:
             return False
 
     @staticmethod
-    def load_config_from_file(parent: tk.Widget, title: str = "Load config") -> Optional[Dict[str, Any]]:
+    def load_config_from_file(
+        parent: tk.Widget, title: str = "Load config"
+    ) -> Optional[Dict[str, Any]]:
         """Load configuration from JSON file with error handling."""
-        filename = UIUtils.browse_file(parent, title,
-                                     [("JSON files", "*.json"), ("All files", "*.*")])
+        filename = UIUtils.browse_file(
+            parent, title, [("JSON files", "*.json"), ("All files", "*.*")]
+        )
         if not filename:
             return None
 
         try:
-            with open(filename, 'r', encoding='utf-8') as f:
+            with open(filename, "r", encoding="utf-8") as f:
                 config = json.load(f)
             messagebox.showinfo("Success", "Config loaded successfully!")
             logger.info(f"Config loaded: {filename}")
@@ -168,7 +216,8 @@ class UIUtils:
 
         try:
             import subprocess
-            subprocess.call(['explorer', os.path.abspath(directory)])
+
+            subprocess.call(["explorer", os.path.abspath(directory)])
             logger.info(f"Opened directory: {directory}")
             return True
         except Exception as e:

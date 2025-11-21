@@ -5,15 +5,17 @@ Data Module - CSV and JSON data read/write management
 import csv
 import json
 import os
-from datetime import datetime
-from typing import Any, List, Dict, Optional
 from collections import Counter
-from .utils import get_logger, ensure_directory
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from .utils import ensure_directory, get_logger
 
 logger = get_logger(__name__)
 
 
 # ==================== DATA LOADING ====================
+
 
 def _validate_file(file_path: str) -> None:
     """Validate file exists, raise FileNotFoundError if not."""
@@ -22,7 +24,7 @@ def _validate_file(file_path: str) -> None:
         raise FileNotFoundError(f"File not found: {file_path}")
 
 
-def load_csv(file_path: str, encoding: str = 'utf-8') -> List[Dict[str, Any]]:
+def load_csv(file_path: str, encoding: str = "utf-8") -> List[Dict[str, Any]]:
     """Read data from CSV file."""
     _validate_file(file_path)
     try:
@@ -35,17 +37,19 @@ def load_csv(file_path: str, encoding: str = 'utf-8') -> List[Dict[str, Any]]:
         return []
 
 
-def load_json(file_path: str, encoding: str = 'utf-8') -> List[Dict[str, Any]]:
+def load_json(file_path: str, encoding: str = "utf-8") -> List[Dict[str, Any]]:
     """Read data from JSON file, normalize to list."""
     _validate_file(file_path)
     try:
         with open(file_path, encoding=encoding) as f:
             data = json.load(f)
-        
-        result = data if isinstance(data, list) else [data] if isinstance(data, dict) else []
+
+        result = (
+            data if isinstance(data, list) else [data] if isinstance(data, dict) else []
+        )
         if not isinstance(data, (list, dict)):
             logger.warning(f" Unexpected JSON type: {type(data)}, returning empty list")
-        
+
         logger.info(f" Loaded {len(result)} items from JSON: {file_path}")
         return result
     except (json.JSONDecodeError, Exception) as e:
@@ -53,12 +57,24 @@ def load_json(file_path: str, encoding: str = 'utf-8') -> List[Dict[str, Any]]:
         return []
 
 
-def load_data(file_path: str, encoding: str = 'utf-8') -> List[Dict[str, Any]]:
-    """Auto-detect and load data from CSV or JSON file."""
+def load_data(file_path: str, encoding: str = "utf-8") -> List[Dict[str, Any]]:
+    """Auto-detect and load data from CSV or JSON file.
+
+    Args:
+        file_path: Path to data file (.csv or .json).
+        encoding: File encoding (default: 'utf-8').
+
+    Returns:
+        List[Dict[str, Any]]: List of dictionaries containing loaded data.
+
+    Raises:
+        FileNotFoundError: If file does not exist.
+        ValueError: If file format is not supported.
+    """
     _validate_file(file_path)
     ext = os.path.splitext(file_path)[1].lower()
-    loaders = {'.csv': load_csv, '.json': load_json}
-    
+    loaders = {".csv": load_csv, ".json": load_json}
+
     if ext not in loaders:
         raise ValueError(f"Unsupported file format: {ext}. Use .csv or .json")
     return loaders[ext](file_path, encoding)
@@ -66,11 +82,13 @@ def load_data(file_path: str, encoding: str = 'utf-8') -> List[Dict[str, Any]]:
 
 # ==================== DATA WRITING ====================
 
-def write_csv(file_path: str, data: List[Dict[str, Any]],
-              encoding: str = 'utf-8', mode: str = 'w') -> bool:
+
+def write_csv(
+    file_path: str, data: List[Dict[str, Any]], encoding: str = "utf-8", mode: str = "w"
+) -> bool:
     """
     Write list of dictionaries to CSV file.
-    
+
     Note: For incremental writes, always use mode='w' to rewrite entire file
     with all accumulated results. This ensures data consistency.
     """
@@ -84,7 +102,7 @@ def write_csv(file_path: str, data: List[Dict[str, Any]],
 
         # Always write in 'w' mode to ensure complete file rewrite
         # This is safe because ResultWriter maintains all results in memory
-        with open(file_path, 'w', newline='', encoding=encoding) as f:
+        with open(file_path, "w", newline="", encoding=encoding) as f:
             writer = csv.DictWriter(f, fieldnames=data[0].keys())
             writer.writeheader()
             writer.writerows(data)
@@ -98,20 +116,30 @@ def write_csv(file_path: str, data: List[Dict[str, Any]],
 
 # ==================== RESULT WRITER CLASS ====================
 
+
 class ResultWriter:
-    """Utility class for writing test/automation results to CSV with buffering and resume support."""
+    """Utility class for writing test/automation results to CSV with buffering and resume support.
 
-    RESULT_OK, RESULT_NG, RESULT_SKIP, RESULT_ERROR = 'OK', 'NG', 'SKIP', 'ERROR'
+    This class provides incremental result writing with automatic resume capability,
+    allowing interrupted automation sessions to continue from where they left off.
+    """
 
-    def __init__(self, output_path: str, auto_write: bool = True, resume: bool = True, batch_size: int = 100):
-        """
-        Initialize ResultWriter with output path and auto-write option.
-        
+    RESULT_OK, RESULT_NG, RESULT_SKIP, RESULT_ERROR = "OK", "NG", "SKIP", "ERROR"
+
+    def __init__(
+        self,
+        output_path: str,
+        auto_write: bool = True,
+        resume: bool = True,
+        batch_size: int = 100,
+    ):
+        """Initialize ResultWriter with output path and auto-write option.
+
         Args:
-            output_path: Path to output CSV file
-            auto_write: Automatically write after each add_result (default: True for incremental saving and resume support)
-            resume: Load existing results if file exists (default: True for resume support)
-            batch_size: Reserved for future optimization (currently unused when auto_write=True)
+            output_path: Path to output CSV file.
+            auto_write: Automatically write after each add_result for incremental saving (default: True).
+            resume: Load existing results if file exists for resume support (default: True).
+            batch_size: Reserved for future optimization (currently unused when auto_write=True).
         """
         self.output_path = output_path
         self.auto_write = auto_write
@@ -121,12 +149,14 @@ class ResultWriter:
 
         if directory := os.path.dirname(output_path):
             ensure_directory(directory)
-        
+
         # Load existing results for resume support
         if resume and os.path.exists(output_path):
             self._load_existing_results()
-        
-        logger.info(f"ResultWriter initialized: {output_path} (auto_write={auto_write}, resume={resume}, {len(self.results)} existing results)")
+
+        logger.info(
+            f"ResultWriter initialized: {output_path} (auto_write={auto_write}, resume={resume}, {len(self.results)} existing results)"
+        )
 
     def _load_existing_results(self) -> None:
         """Load existing results from CSV file for resume support."""
@@ -135,20 +165,24 @@ class ResultWriter:
             if not existing_data:
                 logger.info("No existing results found in file")
                 return
-            
+
             self.results = existing_data
-            
+
             # Track completed test IDs
             for row in existing_data:
-                test_id = row.get('test_case_id')
+                test_id = row.get("test_case_id")
                 if test_id:
                     self.completed_test_ids.add(str(test_id))
-            
+
             # Log detailed resume information
-            completed_ids = sorted([int(id) for id in self.completed_test_ids if id.isdigit()])
+            completed_ids = sorted(
+                [int(id) for id in self.completed_test_ids if id.isdigit()]
+            )
             logger.info(f"✓ Resume: Loaded {len(self.results)} existing results")
-            logger.info(f"✓ Resume: {len(self.completed_test_ids)} completed test cases: {completed_ids}")
-            
+            logger.info(
+                f"✓ Resume: {len(self.completed_test_ids)} completed test cases: {completed_ids}"
+            )
+
         except FileNotFoundError:
             logger.info("No existing results file found, starting fresh")
         except Exception as e:
@@ -156,27 +190,41 @@ class ResultWriter:
 
     def is_completed(self, test_case: Dict[str, Any]) -> bool:
         """Check if a test case has already been completed."""
-        test_id = test_case.get('test_case_id')
+        test_id = test_case.get("test_case_id")
         return str(test_id) in self.completed_test_ids if test_id else False
 
-    def add_result(self, test_case: Dict[str, Any], result: str,
-                  error_message: Optional[str] = None,
-                  extra_fields: Optional[Dict[str, Any]] = None) -> None:
-        """Add a test case result with timestamp and optional error/extra fields."""
-        row_data = {**test_case, 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 
-                    'result': result}
+    def add_result(
+        self,
+        test_case: Dict[str, Any],
+        result: str,
+        error_message: Optional[str] = None,
+        extra_fields: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Add a test case result with timestamp and optional error/extra fields.
+
+        Args:
+            test_case: Dictionary containing test case data (must include test_case_id for resume).
+            result: Result status (RESULT_OK, RESULT_NG, RESULT_SKIP, or RESULT_ERROR).
+            error_message: Optional error message if test failed.
+            extra_fields: Optional additional fields to include in the result.
+        """
+        row_data = {
+            **test_case,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "result": result,
+        }
         if error_message:
-            row_data['error_message'] = error_message
+            row_data["error_message"] = error_message
         if extra_fields:
             row_data.update(extra_fields)
-        
+
         # Track completed test ID
-        test_id = test_case.get('test_case_id')
+        test_id = test_case.get("test_case_id")
         if test_id:
             self.completed_test_ids.add(str(test_id))
-        
+
         self.results.append(row_data)
-        
+
         # Incremental save when auto_write is enabled
         # Write after EVERY add_result to ensure resume mechanism works correctly
         if self.auto_write:
@@ -193,9 +241,11 @@ class ResultWriter:
         if success and clear_after_write:
             self.clear()
         elif success:
-            logger.debug(f"Incremental save: {len(self.results)} results written to {self.output_path}")
+            logger.debug(
+                f"Incremental save: {len(self.results)} results written to {self.output_path}"
+            )
         return success
-    
+
     def flush(self) -> bool:
         """Force write all results immediately (alias for write())."""
         return self.write()
@@ -207,7 +257,9 @@ class ResultWriter:
 
     def get_summary(self) -> Dict[str, int]:
         """Get results summary with count of each result type."""
-        return dict(Counter(row.get('result', self.RESULT_ERROR) for row in self.results))
+        return dict(
+            Counter(row.get("result", self.RESULT_ERROR) for row in self.results)
+        )
 
     def print_summary(self) -> None:
         """Print results summary to logger."""
@@ -223,7 +275,9 @@ class ResultWriter:
         else:
             for result_type, count in sorted(summary.items()):
                 if count > 0:
-                    logger.info(f"  {result_type:<10}: {count:>4} ({count/total*100:>5.1f}%)")
+                    logger.info(
+                        f"  {result_type:<10}: {count:>4} ({count/total*100:>5.1f}%)"
+                    )
 
         logger.info("-" * 60)
         logger.info(f"  {'TOTAL':<10}: {total:>4}")
