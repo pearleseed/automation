@@ -32,6 +32,9 @@ class AutoCPeachGUI(tk.Tk):
         self.geometry("1400x900")
         self.minsize(1200, 800)
 
+        # Center window on screen
+        self.center_window()
+
         # Setup logging queue
         self.log_queue = queue.Queue()
         self.setup_logging()
@@ -62,6 +65,25 @@ class AutoCPeachGUI(tk.Tk):
 
         logger.info("GUI initialized")
 
+    def center_window(self):
+        """Center the application window on screen."""
+        self.update_idletasks()  # Update window to get accurate dimensions
+
+        # Get window dimensions
+        window_width = self.winfo_width()
+        window_height = self.winfo_height()
+
+        # Get screen dimensions
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+
+        # Calculate center position
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+
+        # Set window position
+        self.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
     def setup_logging(self):
         """Configure logging with buffered queue handler."""
         queue_handler = QueueHandler(self.log_queue, buffer_size=25, flush_interval=0.3)
@@ -74,7 +96,7 @@ class AutoCPeachGUI(tk.Tk):
     def setup_styles(self):
         """Configure UI styling with modern theme."""
         style = ttk.Style()
-        style.theme_use("clam")  # More modern than "alt"
+        style.theme_use("alt")  # More modern than "alt"
 
         # Accent button - primary actions
         style.configure(

@@ -4,10 +4,19 @@ import logging
 import os
 import sys
 from contextlib import contextmanager
-from ctypes import (POINTER, Structure, byref, c_char, c_char_p, c_float,
-                    c_int32, c_int64, c_ubyte)
+from ctypes import (
+    POINTER,
+    Structure,
+    byref,
+    c_char,
+    c_char_p,
+    c_float,
+    c_int32,
+    c_int64,
+    c_ubyte,
+)
 from threading import Lock
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from PIL import Image
 
@@ -178,11 +187,16 @@ class OcrEngine:
         self.pipeline = None
         self.process_options = None
 
+        # Pre-allocate reusable C types to avoid repeated allocations
         self._c_int64_pool = c_int64()
         self._c_float_pool = c_float()
         self._c_char_p_pool = c_char_p()
         self._bbox_ptr_pool = BoundingBox_p()
         self._cv2_module = None
+
+        # Cache for small image conversion (avoid repeated allocations)
+        self._small_image_threshold = 1_000_000
+        self._bgra_buffer = None
 
         try:
             self._initialize()
@@ -337,33 +351,48 @@ class OcrEngine:
         if not self._initialized:
             return self._error_result("OCR engine not initialized")
 
-        error = self._validate_image_size(image.width, image.height)
+        width, height = image.width, image.height
+        error = self._validate_image_size(width, height)
         if error:
             return self._error_result(error)
 
+        # Avoid unnecessary conversion if already RGBA
         if image.mode != "RGBA":
             image = image.convert("RGBA")
 
-        width, height = image.width, image.height
         step = width * 4
         rgba_bytes = image.tobytes()
+        byte_size = len(rgba_bytes)
 
-        if len(rgba_bytes) < 1_000_000:
-            bgra_bytes = bytearray(rgba_bytes)
+        # Optimized BGRA conversion for small images using in-place operations
+        if byte_size < self._small_image_threshold:
+            # Reuse buffer if possible
+            if self._bgra_buffer is None or len(self._bgra_buffer) < byte_size:
+                self._bgra_buffer = bytearray(byte_size)
+            else:
+                # Reuse existing buffer
+                bgra_bytes = self._bgra_buffer[:byte_size]
+                bgra_bytes[:] = rgba_bytes
+                bgra_bytes[0::4], bgra_bytes[2::4] = bgra_bytes[2::4], bgra_bytes[0::4]
+                data = bytes(bgra_bytes)
+
+                with self._lock:
+                    return self._process_image(
+                        cols=width, rows=height, step=step, data=data
+                    )
+
+            bgra_bytes = self._bgra_buffer[:byte_size]
+            bgra_bytes[:] = rgba_bytes
             bgra_bytes[0::4], bgra_bytes[2::4] = bgra_bytes[2::4], bgra_bytes[0::4]
             data = bytes(bgra_bytes)
         else:
+            # For large images, use PIL split/merge (more memory efficient)
             b, g, r, a = image.split()
             bgra_image = Image.merge("RGBA", (b, g, r, a))
             data = bgra_image.tobytes()
 
-        with self._lock:  # Thread safety
-            return self._process_image(
-                cols=width,
-                rows=height,
-                step=step,
-                data=data,
-            )
+        with self._lock:
+            return self._process_image(cols=width, rows=height, step=step, data=data)
 
     def recognize_cv2(self, image_buffer) -> Dict[str, Any]:
         """Perform OCR on an OpenCV image buffer.
@@ -414,14 +443,16 @@ class OcrEngine:
                 data=img.ctypes.data,
             )
 
-    def _process_image(self, cols: int, rows: int, step: int, data) -> Dict[str, Any]:
+    def _process_image(
+        self, cols: int, rows: int, step: int, data: Union[bytes, int]
+    ) -> Dict[str, Any]:
         """Create image structure and perform OCR processing.
 
         Args:
             cols: Image width in pixels.
             rows: Image height in pixels.
             step: Number of bytes per row.
-            data: Image data as bytes or pointer.
+            data: Image data as bytes or pointer address (int).
 
         Returns:
             OCR result dictionary.
@@ -488,10 +519,19 @@ class OcrEngine:
             return copy.deepcopy(self._EMPTY_RESULT)
 
         lines = self._get_lines(ocr_result, line_count)
-        text_parts = [line["text"] for line in lines if line["text"]]
+
+        # Optimize text joining - avoid intermediate list if possible
+        if line_count == 1:
+            text = lines[0]["text"] or ""
+        else:
+            text_parts = []
+            for line in lines:
+                if line["text"]:
+                    text_parts.append(line["text"])
+            text = "\n".join(text_parts) if text_parts else ""
 
         return {
-            "text": "\n".join(text_parts),
+            "text": text,
             "text_angle": self._get_text_angle(ocr_result),
             "lines": lines,
         }
@@ -519,7 +559,11 @@ class OcrEngine:
         Returns:
             List of line dictionaries.
         """
-        return [self._process_line(ocr_result, idx) for idx in range(line_count)]
+        # Pre-allocate list for better performance
+        lines = [None] * line_count
+        for idx in range(line_count):
+            lines[idx] = self._process_line(ocr_result, idx)
+        return lines
 
     def _process_line(self, ocr_result: c_int64, line_index: int) -> Dict[str, Any]:
         """Process a single text line.
@@ -559,7 +603,11 @@ class OcrEngine:
         if word_count == 0:
             return []
 
-        return [self._process_word(line_handle, idx) for idx in range(word_count)]
+        # Pre-allocate list for better performance
+        words = [None] * word_count
+        for idx in range(word_count):
+            words[idx] = self._process_word(line_handle, idx)
+        return words
 
     def _process_word(self, line_handle: c_int64, word_index: int) -> Dict[str, Any]:
         """Process an individual word.
@@ -613,21 +661,23 @@ class OcrEngine:
             Dictionary with x1-x4, y1-y4 coordinates, or None if unavailable.
         """
         if (
-            bbox_function(handle, byref(self._bbox_ptr_pool)) == 0
-            and self._bbox_ptr_pool
+            bbox_function(handle, byref(self._bbox_ptr_pool)) != 0
+            or not self._bbox_ptr_pool
         ):
-            bbox = self._bbox_ptr_pool.contents
-            return {
-                "x1": bbox.x1,
-                "y1": bbox.y1,
-                "x2": bbox.x2,
-                "y2": bbox.y2,
-                "x3": bbox.x3,
-                "y3": bbox.y3,
-                "x4": bbox.x4,
-                "y4": bbox.y4,
-            }
-        return None
+            return None
+
+        bbox = self._bbox_ptr_pool.contents
+        # Direct assignment is faster than dict literal for small dicts
+        return {
+            "x1": bbox.x1,
+            "y1": bbox.y1,
+            "x2": bbox.x2,
+            "y2": bbox.y2,
+            "x3": bbox.x3,
+            "y3": bbox.y3,
+            "x4": bbox.x4,
+            "y4": bbox.y4,
+        }
 
     def _get_word_confidence(self, word_handle: c_int64) -> Optional[float]:
         """Extract confidence score from a word handle.

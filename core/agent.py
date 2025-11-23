@@ -1,7 +1,7 @@
 """Agent Module - Device interaction and OCR with enhanced performance."""
 
 import time
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, Any
 
 import cv2
 import numpy as np
@@ -10,8 +10,7 @@ from airtest.core.error import AirtestError
 
 import core.oneocr_optimized as oneocr
 
-from .config import (DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY,
-                     DEFAULT_TOUCH_TIMES)
+from .config import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY, DEFAULT_TOUCH_TIMES
 from .utils import get_logger
 
 # ==================== OCR ENGINE ENHANCEMENT ====================
@@ -179,25 +178,20 @@ class Agent:
             return False
         return self._device_verified or self._verify_device()
 
-    def snapshot(self) -> Optional[np.ndarray]:
-        """Capture full screen screenshot from connected device.
+    def snapshot(self) -> Optional[Any]:
+        """Take a screenshot of the connected device.
 
         Returns:
-            Optional[np.ndarray]: Screenshot as NumPy array (BGR format), or None if failed.
+            Screenshot data (usually numpy array or PIL Image) or None if failed.
         """
-        if not self.is_device_connected():
-            self.logger.error("Device not connected")
-            return None
-
-        if self.device is None:
-            self.logger.error("Device is None")
+        if not self.device:
+            self.logger.error("Cannot take snapshot: No device connected")
             return None
 
         try:
             return self.device.snapshot()
         except Exception as e:
             self.logger.error(f"Snapshot failed: {e}")
-            self._device_verified = False
             return None
 
     def snapshot_region(

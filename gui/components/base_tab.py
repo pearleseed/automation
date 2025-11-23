@@ -49,7 +49,6 @@ class BaseAutomationTab(ttk.Frame):
         self.results_dir_var = tk.StringVar(
             value=f"{DEFAULT_PATHS['results']}/{tab_name.lower()}/results"
         )
-        self.wait_time_var = tk.StringVar(value="1.0")
         self.status_var = tk.StringVar(value="Ready")
 
         # Abstract properties that subclasses must define
@@ -172,19 +171,6 @@ class BaseAutomationTab(ttk.Frame):
         ttk.Button(
             config_inner, text="...", command=self.browse_results_dir, width=3
         ).grid(row=2, column=2, pady=3, ipady=2)
-
-        # Wait time
-        ttk.Label(config_inner, text="Wait Time:", font=("Segoe UI", 9, "bold")).grid(
-            row=3, column=0, sticky="w", pady=3
-        )
-        wait_frame = ttk.Frame(config_inner)
-        wait_frame.grid(row=3, column=1, sticky="w", padx=3, pady=3)
-        ttk.Entry(
-            wait_frame, textvariable=self.wait_time_var, width=6, font=("Segoe UI", 9)
-        ).pack(side="left", padx=(0, 3))
-        ttk.Label(wait_frame, text="sec", font=("Segoe UI", 8), foreground="#666").pack(
-            side="left"
-        )
 
         config_inner.columnconfigure(1, weight=1)
 
@@ -941,15 +927,10 @@ class BaseAutomationTab(ttk.Frame):
 
     def get_config(self) -> Dict[str, Any]:
         """Get configuration from UI inputs."""
-        wait_time = UIUtils.validate_numeric_input(
-            self.wait_time_var.get(), min_val=0.1, max_val=10.0, default=1.0
-        )
-
         config = {
             "templates_path": self.templates_path_var.get().strip(),
             "snapshot_dir": self.snapshot_dir_var.get().strip(),
             "results_dir": self.results_dir_var.get().strip(),
-            "wait_after_touch": wait_time,
         }
 
         config.update(self._get_automation_config())
@@ -970,8 +951,6 @@ class BaseAutomationTab(ttk.Frame):
             for key in ["file_path", "templates_path", "snapshot_dir", "results_dir"]:
                 if key in config:
                     getattr(self, f"{key}_var").set(config[key])
-            if "wait_after_touch" in config:
-                self.wait_time_var.set(str(config["wait_after_touch"]))
         return config
 
     def start_automation(self):

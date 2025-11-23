@@ -20,8 +20,7 @@ from typing import Any, Dict, List, Optional
 from airtest.core.api import Template, exists, sleep
 
 from core.agent import Agent
-from core.base import (BaseAutomation, CancellationError, ExecutionStep,
-                       StepResult)
+from core.base import BaseAutomation, CancellationError, ExecutionStep, StepResult
 from core.config import GACHA_ROI_CONFIG, get_gacha_config, merge_config
 from core.data import ResultWriter
 from core.utils import StructuredLogger, ensure_directory, get_logger
@@ -433,7 +432,7 @@ class GachaAutomation(BaseAutomation):
         start_time = time.time()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = f"{self.results_dir}/gacha_{timestamp}.csv"
-        result_writer = ResultWriter(output_path, auto_write=True)
+        result_writer = ResultWriter(output_path, formats=["csv", "json", "html"], auto_write=True)
 
         # Calculate total pulls
         total_pulls = sum(g.get("num_pulls", 0) for g in gachas_config)

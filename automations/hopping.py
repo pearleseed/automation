@@ -21,8 +21,7 @@ from typing import Any, Dict, Optional
 from airtest.core.api import sleep
 
 from core.agent import Agent
-from core.base import (BaseAutomation, CancellationError, ExecutionStep,
-                       StepResult)
+from core.base import BaseAutomation, CancellationError, ExecutionStep, StepResult
 from core.config import HOPPING_ROI_CONFIG, get_hopping_config, merge_config
 from core.data import ResultWriter, load_data
 from core.detector import TextProcessor
@@ -371,7 +370,12 @@ class HoppingAutomation(BaseAutomation):
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     output_path = f"{self.results_dir}/hopping_batch_{timestamp}.csv"
 
-                result_writer = ResultWriter(output_path, auto_write=True, resume=True)
+                result_writer = ResultWriter(
+                    output_path,
+                    formats=["csv", "json", "html"],
+                    auto_write=True,
+                    resume=True,
+                )
 
                 config_info = {
                     "Mode": "Batch (Data File)",
@@ -476,7 +480,12 @@ class HoppingAutomation(BaseAutomation):
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     output_path = f"{self.results_dir}/hopping_results_{timestamp}.csv"
 
-                result_writer = ResultWriter(output_path, auto_write=True, resume=True)
+                result_writer = ResultWriter(
+                    output_path,
+                    formats=["csv", "json", "html"],
+                    auto_write=True,
+                    resume=True,
+                )
 
                 config_info = {
                     "Mode": "Direct",

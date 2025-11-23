@@ -28,13 +28,20 @@ from typing import Any, Dict, List, Optional, Tuple
 from airtest.core.api import sleep
 
 from core.agent import Agent
-from core.base import (BaseAutomation, CancellationError, ExecutionStep,
-                       StepResult)
-from core.config import (FESTIVAL_CONFIG, FESTIVALS_ROI_CONFIG,
-                         get_festival_config, merge_config)
+from core.base import BaseAutomation, CancellationError, ExecutionStep, StepResult
+from core.config import (
+    FESTIVAL_CONFIG,
+    FESTIVALS_ROI_CONFIG,
+    get_festival_config,
+    merge_config,
+)
 from core.data import ResultWriter, load_data
-from core.detector import (YOLO_AVAILABLE, OCRTextProcessor, TemplateMatcher,
-                           YOLODetector)
+from core.detector import (
+    YOLO_AVAILABLE,
+    OCRTextProcessor,
+    TemplateMatcher,
+    YOLODetector,
+)
 from core.utils import StructuredLogger, ensure_directory, get_logger
 
 logger = get_logger(__name__)
@@ -153,6 +160,7 @@ class FestivalAutomation(BaseAutomation):
                     "data_path": kwargs["data_path"],
                     "output_path": kwargs["output_path"],
                     "use_detector": kwargs["use_detector"],
+                    "start_stage_index": kwargs.get("start_stage_index", 1),
                     "current_stage": kwargs["current_stage"],
                     "total_stages": kwargs["total_stages"],
                     "timestamp": datetime.now().isoformat(),
@@ -287,13 +295,26 @@ class FestivalAutomation(BaseAutomation):
         extracted_data: Dict[str, Any],
         expected_data: Dict[str, Any],
         return_details: bool = True,
+        roi_names: Optional[List[str]] = None,
     ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
-        """Compare OCR/Detector data with expected CSV data using OCRTextProcessor."""
+        """Compare extracted ROI data with expected values.
+
+        Args:
+            extracted_data: Extracted ROI data from OCR/detector.
+            expected_data: Expected values from CSV/JSON.
+            return_details: If True, return detailed comparison results.
+            roi_names: ROI names to compare. If None, compare all extracted ROIs.
+
+        Returns:
+            Tuple of (is_match, message, details_dict).
+        """
         if not expected_data:
             return True, "No expected data", {} if return_details else None
 
-        roi_fields = set(FESTIVALS_ROI_CONFIG.keys())
-        roi_fields.discard("フェスランク")
+        # Determine which ROIs to compare
+        roi_fields = set(roi_names) if roi_names else set(extracted_data.keys())
+
+        # Filter expected data to only comparable fields
         comparable_fields = {
             k: v for k, v in expected_data.items() if k in roi_fields and v
         }
@@ -555,6 +576,7 @@ class FestivalAutomation(BaseAutomation):
                     extracted,
                     stage_data,
                     return_details=True,
+                    roi_names=pre_battle_rois,
                 )
                 self.structured_logger.info(
                     f"Verification{' (with detector)' if use_detector and self.detector else ''}: {msg}"
@@ -719,6 +741,7 @@ class FestivalAutomation(BaseAutomation):
                     extracted,
                     stage_data,
                     return_details=True,
+                    roi_names=post_battle_rois,
                 )
                 self.structured_logger.info(
                     f"Verification{' (with detector)' if use_detector and self.detector else ''}: {msg}"
@@ -809,6 +832,7 @@ class FestivalAutomation(BaseAutomation):
         use_detector: bool = False,
         resume: bool = True,
         force_new_session: bool = False,
+        start_stage_index: int = 1,
     ) -> bool:
         """
         Run automation for all stages with incremental saving and resume support.
@@ -819,6 +843,7 @@ class FestivalAutomation(BaseAutomation):
             use_detector: Use detector (YOLO/Template)
             resume: Resume from existing results if available (default: True)
             force_new_session: Force start new session even if resume state exists (default: False)
+            start_stage_index: Index of stage to start from (1-based, default: 1)
 
         Returns:
             bool: True if successful
@@ -834,6 +859,21 @@ class FestivalAutomation(BaseAutomation):
                 self.structured_logger.error(f"Failed to load data from {data_path}")
                 return False
 
+            # Apply start stage index filter
+            original_count = len(stages_data)
+            if start_stage_index > 1:
+                if start_stage_index > original_count:
+                    self.structured_logger.error(
+                        f"Start stage {start_stage_index} exceeds total ({original_count})"
+                    )
+                    return False
+
+                stages_data = stages_data[start_stage_index - 1 :]
+                self.structured_logger.info(
+                    f"✓ Starting from stage {start_stage_index}/{original_count} | "
+                    f"Remaining: {len(stages_data)}"
+                )
+
             # Check for existing resume state
             resume_state = None
             if resume and not force_new_session:
@@ -844,6 +884,7 @@ class FestivalAutomation(BaseAutomation):
                     if (
                         resume_state.get("data_path") != data_path
                         or resume_state.get("use_detector") != use_detector
+                        or resume_state.get("start_stage_index", 1) != start_stage_index
                     ):
                         logger.warning("Resume mismatch, starting new session")
                         self._manage_resume_state("clear")
@@ -865,21 +906,27 @@ class FestivalAutomation(BaseAutomation):
                 )
 
             # Initialize ResultWriter with auto-write and resume support
-            result_writer = ResultWriter(output_path, auto_write=True, resume=resume)
+            result_writer = ResultWriter(
+                output_path,
+                formats=["csv", "json", "html"],
+                auto_write=True,
+                resume=resume,
+            )
 
-            # Log automation start with configuration
+            # Log automation start
             mode = "Detector + OCR" if use_detector and self.detector else "OCR only"
             config_info = {
                 "Mode": mode,
                 "Total Stages": len(stages_data),
+                "Start Stage": f"{start_stage_index}" if start_stage_index > 1 else "1",
                 "Output Path": output_path,
                 "Data Source": data_path,
-                "Resume Enabled": resume,
+                "Resume": resume,
                 "Max Retries": self.config.get("max_step_retries", 5),
             }
 
             if resume and result_writer.completed_test_ids:
-                config_info["Already Completed"] = len(result_writer.completed_test_ids)
+                config_info["Completed"] = len(result_writer.completed_test_ids)
 
             self.structured_logger.automation_start("FESTIVAL AUTOMATION", config_info)
 
@@ -888,15 +935,16 @@ class FestivalAutomation(BaseAutomation):
             failed_count = 0
             skipped_count = 0
 
-            for idx, stage_data in enumerate(stages_data, 1):
+            for idx, stage_data in enumerate(stages_data, start_stage_index):
                 # Save resume state at start of each stage
                 self._manage_resume_state(
                     "save",
                     data_path=data_path,
                     output_path=output_path,
                     use_detector=use_detector,
+                    start_stage_index=start_stage_index,
                     current_stage=idx,
-                    total_stages=len(stages_data),
+                    total_stages=len(stages_data) + start_stage_index - 1,
                 )
 
                 try:
@@ -943,8 +991,9 @@ class FestivalAutomation(BaseAutomation):
 
                 # Log stage execution
                 stage_name = stage_data.get("フェス名", "Unknown")
+                total = len(stages_data) + start_stage_index - 1
                 self.structured_logger.info(
-                    f"▶ Executing Stage {idx}/{len(stages_data)}: {stage_name}"
+                    f"▶ Executing Stage {idx}/{total}: {stage_name}"
                 )
 
                 # Run the stage
@@ -997,8 +1046,9 @@ class FestivalAutomation(BaseAutomation):
                 )
 
                 # Progress log
+                total = len(stages_data) + start_stage_index - 1
                 self.structured_logger.info(
-                    f"Progress: {idx}/{len(stages_data)} stages | Success: {success_count} | Failed: {failed_count}"
+                    f"Progress: {idx}/{total} | ✓{success_count} ✗{failed_count}"
                 )
 
                 # Delay between stages
@@ -1066,6 +1116,7 @@ class FestivalAutomation(BaseAutomation):
         use_detector: bool = False,
         output_path: Optional[str] = None,
         force_new_session: bool = False,
+        start_stage_index: int = 1,
     ) -> bool:
         """
         Main entry point.
@@ -1075,6 +1126,7 @@ class FestivalAutomation(BaseAutomation):
             use_detector: Use detector (YOLO/Template)
             output_path: Output result path (None = auto-detect from resume or auto-generate)
             force_new_session: Force start new session even if resume state exists
+            start_stage_index: Index of stage to start from (1-based, default: 1)
 
         Returns:
             bool: True if successful
@@ -1096,6 +1148,7 @@ class FestivalAutomation(BaseAutomation):
                 use_detector=use_detector,
                 resume=True,  # Always enable resume by default
                 force_new_session=force_new_session,
+                start_stage_index=start_stage_index,
             )
         except CancellationError:
             self.structured_logger.warning("Automation cancelled")

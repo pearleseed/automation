@@ -322,7 +322,7 @@ class GachaTab(ttk.Frame):
             ).pack(pady=5)
             tk.Label(
                 error_frame,
-                text=f"Error: {str(e)}",
+                text=f"Error: {str(e)}", # type: ignore
                 font=("", 9),
                 foreground="red",
                 bg="#f5f5f5",
