@@ -24,7 +24,7 @@ def _validate_file(file_path: str) -> None:
         raise FileNotFoundError(f"File not found: {file_path}")
 
 
-def load_csv(file_path: str, encoding: str = "utf-8") -> List[Dict[str, Any]]:
+def load_csv(file_path: str, encoding: str = "utf-8-sig") -> List[Dict[str, Any]]:
     """Read data from CSV file."""
     _validate_file(file_path)
     try:
@@ -37,7 +37,7 @@ def load_csv(file_path: str, encoding: str = "utf-8") -> List[Dict[str, Any]]:
         return []
 
 
-def load_json(file_path: str, encoding: str = "utf-8") -> List[Dict[str, Any]]:
+def load_json(file_path: str, encoding: str = "utf-8-sig") -> List[Dict[str, Any]]:
     """Read data from JSON file, normalize to list."""
     _validate_file(file_path)
     try:
@@ -57,7 +57,7 @@ def load_json(file_path: str, encoding: str = "utf-8") -> List[Dict[str, Any]]:
         return []
 
 
-def load_data(file_path: str, encoding: str = "utf-8") -> List[Dict[str, Any]]:
+def load_data(file_path: str, encoding: str = "utf-8-sig") -> List[Dict[str, Any]]:
     """Auto-detect and load data from CSV or JSON file.
 
     Args:
@@ -84,7 +84,10 @@ def load_data(file_path: str, encoding: str = "utf-8") -> List[Dict[str, Any]]:
 
 
 def write_csv(
-    file_path: str, data: List[Dict[str, Any]], encoding: str = "utf-8", mode: str = "w"
+    file_path: str,
+    data: List[Dict[str, Any]],
+    encoding: str = "utf-8-sig",
+    mode: str = "w",
 ) -> bool:
     """
     Write list of dictionaries to CSV file.
@@ -124,7 +127,7 @@ def write_csv(
 
 
 def write_json(
-    file_path: str, data: List[Dict[str, Any]], encoding: str = "utf-8"
+    file_path: str, data: List[Dict[str, Any]], encoding: str = "utf-8-sig"
 ) -> bool:
     """Write list of dictionaries to JSON file."""
     if not data:
@@ -146,7 +149,7 @@ def write_json(
 
 
 def write_html(
-    file_path: str, data: List[Dict[str, Any]], encoding: str = "utf-8"
+    file_path: str, data: List[Dict[str, Any]], encoding: str = "utf-8-sig"
 ) -> bool:
     """Write list of dictionaries to HTML report."""
     if not data:
@@ -186,7 +189,7 @@ class ResultWriter:
     def __init__(
         self,
         output_path: str,
-        formats: List[str] = None,
+        formats: Optional[List[str]] = None,
         auto_write: bool = True,
         resume: bool = True,
     ):
@@ -296,7 +299,7 @@ class ResultWriter:
             return False
 
         success = True
-        
+
         # Write CSV
         if "csv" in self.formats:
             if not write_csv(f"{self.base_path}.csv", self.results):
@@ -314,7 +317,7 @@ class ResultWriter:
 
         if success and clear_after_write:
             self.clear()
-        
+
         return success
 
     def flush(self) -> bool:

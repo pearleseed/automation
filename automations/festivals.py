@@ -1,22 +1,28 @@
 """
 Festival Automation
-Standard flow:
-1. touch(Template("tpl_event.png"))
-2. snapshot -> save to folder (rank_E_stage_1/01_before_touch.png)
-3. find_and_touch_in_roi('フェス名', stage_text) - OCR in フェス名 ROI -> find text -> touch
-3.5. find_and_touch_in_roi('フェスランク', rank_text) - OCR in フェスランク ROI -> find text -> touch
-4. snapshot -> save to folder (rank_E_stage_1/02_after_touch.png)
-5. ROI scan -> compare CSV -> record OK/NG (Pre-battle verification)
-6. touch(Template("tpl_challenge.png"))
-7. touch(Template("tpl_ok.png")) - confirmation dialog
-8. touch(Template("tpl_allskip.png"))
-9. touch(Template("tpl_ok.png")) - after skip
-10. touch(Template("tpl_result.png"))
-11. snapshot -> save to folder (rank_E_stage_1/03_result.png)
-12. ROI scan -> compare CSV -> record OK/NG (Post-battle verification)
-13. touch(Template("tpl_ok.png")) if exists - close result (first)
-14. touch(Template("tpl_ok.png")) if exists - close result (second)
-15. Repeat
+
+Standard flow with fallback cache for long text handling:
+
+1. Touch event button (tpl_event.png)
+2. Snapshot before touch -> save (rank_E_stage_1/01_before_touch.png)
+3. Find & touch festival name (フェス名) - OCR with fallback to cached position
+4. Find & touch rank (フェスランク) - OCR with fallback to cached position
+5. Snapshot after touch -> save (rank_E_stage_1/02_after_touch.png)
+6. Pre-battle verification - ROI scan -> compare CSV -> record OK/NG
+7. Touch challenge button (tpl_challenge.png)
+8. Optional drag & drop (tpl_drag_object.png -> tpl_drop_target.png)
+9. Touch OK button (confirmation dialog) - optional
+10. Touch all skip button (tpl_allskip.png)
+11. Touch OK button (after skip) - optional
+12. Touch result button (tpl_result.png)
+13. Snapshot result -> save (rank_E_stage_1/03_result.png)
+14. Post-battle verification - ROI scan -> compare CSV -> record OK/NG
+15. Touch OK buttons while exists (close all result dialogs)
+
+Fallback mechanism:
+- Steps 3 & 4 cache successful touch positions
+- If OCR match fails, use cached position from previous stage
+- Enables handling of long text that may be truncated or scrolling
 """
 
 import json
@@ -84,6 +90,10 @@ class FestivalAutomation(BaseAutomation):
         # Resume state file
         self.resume_state_file = os.path.join(self.results_dir, ".festival_resume.json")
 
+        # Cache for fallback touch positions
+        self.last_festival_position: Optional[Tuple[float, float]] = None
+        self.last_rank_position: Optional[Tuple[float, float]] = None
+
         logger.info("FestivalAutomation initialized")
         self.structured_logger.info(
             f"Log: {log_file} | Fuzzy: {self.use_fuzzy_matching} (threshold: {self.fuzzy_threshold})"
@@ -146,7 +156,7 @@ class FestivalAutomation(BaseAutomation):
             if action == "load":
                 if not os.path.exists(self.resume_state_file):
                     return None
-                with open(self.resume_state_file, "r", encoding="utf-8") as f:
+                with open(self.resume_state_file, "r", encoding="utf-8-sig") as f:
                     state = json.load(f)
                 if state.get("status") == "in_progress":
                     logger.info(
@@ -166,7 +176,7 @@ class FestivalAutomation(BaseAutomation):
                     "timestamp": datetime.now().isoformat(),
                     "status": "in_progress",
                 }
-                with open(self.resume_state_file, "w", encoding="utf-8") as f:
+                with open(self.resume_state_file, "w", encoding="utf-8-sig") as f:
                     json.dump(state, f, indent=2, ensure_ascii=False)
                 logger.debug(
                     f"Resume saved: {kwargs['current_stage']}/{kwargs['total_stages']}"
@@ -174,11 +184,11 @@ class FestivalAutomation(BaseAutomation):
 
             elif action == "complete":
                 if os.path.exists(self.resume_state_file):
-                    with open(self.resume_state_file, "r", encoding="utf-8") as f:
+                    with open(self.resume_state_file, "r", encoding="utf-8-sig") as f:
                         state = json.load(f)
                     state["status"] = "completed"
                     state["completed_at"] = datetime.now().isoformat()
-                    with open(self.resume_state_file, "w", encoding="utf-8") as f:
+                    with open(self.resume_state_file, "w", encoding="utf-8-sig") as f:
                         json.dump(state, f, indent=2, ensure_ascii=False)
                     logger.debug("Resume completed")
 
@@ -383,7 +393,7 @@ class FestivalAutomation(BaseAutomation):
 
     def run_festival_stage(
         self, stage_data: Dict[str, Any], stage_idx: int, use_detector: bool = False
-    ) -> bool:
+    ) -> Dict[str, Any]:
         """Run automation for a single festival stage with verification.
 
         Args:
@@ -392,7 +402,10 @@ class FestivalAutomation(BaseAutomation):
             use_detector: Enable YOLO/Template detector for item verification (default: False).
 
         Returns:
-            bool: True if stage completed successfully with all verifications passed, False otherwise.
+            Dict[str, Any]: Result dictionary with keys:
+                - success (bool): True if stage completed successfully
+                - pre_battle_details (Dict): Pre-battle verification details
+                - post_battle_details (Dict): Post-battle verification details
         """
         stage_name = stage_data.get("フェス名", "Unknown")
         rank = stage_data.get("推奨ランク", "Unknown")
@@ -455,7 +468,7 @@ class FestivalAutomation(BaseAutomation):
                     "post_battle_details": {},
                 }
 
-            # Step 3: Find and Touch Stage Name
+            # Step 3: Find and Touch Stage Name with fallback
             if not stage_text:
                 self.structured_logger.error(
                     "Step 3: No stage text (フェス名) provided"
@@ -466,15 +479,37 @@ class FestivalAutomation(BaseAutomation):
                     "post_battle_details": {},
                 }
 
-            step3 = ExecutionStep(
-                step_num=3,
-                name=f"Find & Touch Stage Name '{stage_text}'",
-                action=lambda: self.find_and_touch_in_roi(
+            def _touch_festival():
+                # Try OCR matching
+                if self.find_and_touch_in_roi(
                     "フェス名",
                     stage_text,
                     threshold=self.fuzzy_threshold,
                     use_fuzzy=self.use_fuzzy_matching,
-                ),
+                ):
+                    # Cache position on success
+                    roi_config = self.get_roi_config("フェス名")
+                    if roi_config:
+                        x1, x2, y1, y2 = roi_config
+                        self.last_festival_position = ((x1 + x2) / 2, (y1 + y2) / 2)
+                    return True
+
+                # Fallback: use cached position
+                if self.last_festival_position:
+                    self.structured_logger.warning(
+                        f"OCR match failed for festival '{stage_text}', using cached position"
+                    )
+                    success = self.agent.safe_touch(self.last_festival_position)
+                    if success:
+                        sleep(self.wait_after_touch)
+                    return success
+
+                return False
+
+            step3 = ExecutionStep(
+                step_num=3,
+                name=f"Find & Touch Stage Name '{stage_text}'",
+                action=_touch_festival,
                 max_retries=max_retries,
                 retry_delay=retry_delay,
                 post_delay=0.5,
@@ -488,7 +523,7 @@ class FestivalAutomation(BaseAutomation):
                     "post_battle_details": {},
                 }
 
-            # Step 4: Find and Touch Rank
+            # Step 4: Find and Touch Rank with fallback
             if not rank_text:
                 self.structured_logger.error(
                     "Step 4: No rank text (フェスランク) provided"
@@ -499,15 +534,38 @@ class FestivalAutomation(BaseAutomation):
                     "post_battle_details": {},
                 }
 
-            step4 = ExecutionStep(
-                step_num=4,
-                name=f"Find & Touch Rank '{rank_text}'",
-                action=lambda: self.find_and_touch_in_roi(
+            def _touch_rank():
+                # Try to find and touch rank with OCR
+                if self.find_and_touch_in_roi(
                     "フェスランク",
                     rank_text,
                     threshold=self.fuzzy_threshold,
                     use_fuzzy=self.use_fuzzy_matching,
-                ),
+                ):
+                    # Success - get ROI config to calculate rank position
+                    roi_config = self.get_roi_config("フェスランク")
+                    if roi_config:
+                        x1, x2, y1, y2 = roi_config
+                        # Estimate center of ROI as last known rank position
+                        self.last_rank_position = ((x1 + x2) / 2, (y1 + y2) / 2)
+                    return True
+
+                # Fallback: if match failed but we have cached position, use it
+                if self.last_rank_position:
+                    self.structured_logger.warning(
+                        f"OCR match failed for rank '{rank_text}', using cached position"
+                    )
+                    success = self.agent.safe_touch(self.last_rank_position)
+                    if success:
+                        sleep(self.wait_after_touch)
+                    return success
+
+                return False
+
+            step4 = ExecutionStep(
+                step_num=4,
+                name=f"Find & Touch Rank '{rank_text}'",
+                action=_touch_rank,
                 max_retries=max_retries,
                 retry_delay=retry_delay,
                 post_delay=0.5,
@@ -623,9 +681,28 @@ class FestivalAutomation(BaseAutomation):
             )
             step7.execute()
 
-            # Step 8: Touch OK (Confirmation Dialog)
-            step8 = ExecutionStep(
+            # Step 8: Optional Continuous Hold & Drag
+            ExecutionStep(
                 step_num=8,
+                name="Continuous Hold & Drag Object to Target",
+                action=lambda: self.drag_and_drop(
+                    "tpl_drag_object.png",
+                    "tpl_drop_target.png",
+                    hold_duration=0.4,
+                    drag_duration=0.5,
+                    optional=True,
+                ),
+                max_retries=1,
+                retry_delay=retry_delay,
+                optional=True,
+                post_delay=1.0,
+                cancel_checker=self.check_cancelled,
+                logger=self.structured_logger,
+            ).execute()
+
+            # Step 9: Touch OK (Confirmation Dialog)
+            step9 = ExecutionStep(
+                step_num=9,
                 name="Touch OK (Confirmation)",
                 action=lambda: self.touch_template("tpl_ok.png"),
                 max_retries=max_retries,
@@ -635,11 +712,11 @@ class FestivalAutomation(BaseAutomation):
                 cancel_checker=self.check_cancelled,
                 logger=self.structured_logger,
             )
-            step8.execute()  # Optional, don't check result
+            step9.execute()  # Optional, don't check result
 
-            # Step 9: Touch All Skip Button
-            step9 = ExecutionStep(
-                step_num=9,
+            # Step 10: Touch All Skip Button
+            step10 = ExecutionStep(
+                step_num=10,
                 name="Touch All Skip Button",
                 action=lambda: self.touch_template("tpl_allskip.png"),
                 max_retries=max_retries,
@@ -648,11 +725,11 @@ class FestivalAutomation(BaseAutomation):
                 cancel_checker=self.check_cancelled,
                 logger=self.structured_logger,
             )
-            step9.execute()
+            step10.execute()
 
-            # Step 10: Touch OK (After Skip) - Optional
-            step10 = ExecutionStep(
-                step_num=10,
+            # Step 11: Touch OK (After Skip) - Optional
+            step11 = ExecutionStep(
+                step_num=11,
                 name="Touch OK (After Skip)",
                 action=lambda: self.touch_template("tpl_ok.png", optional=True),
                 max_retries=max_retries,
@@ -662,13 +739,13 @@ class FestivalAutomation(BaseAutomation):
                 cancel_checker=self.check_cancelled,
                 logger=self.structured_logger,
             )
-            step10.execute()  # Optional, don't check result
+            step11.execute()  # Optional, don't check result
 
             self.structured_logger.info("Waiting for battle completion...")
 
-            # Step 11: Touch Result Button
-            step11 = ExecutionStep(
-                step_num=11,
+            # Step 12: Touch Result Button
+            step12 = ExecutionStep(
+                step_num=12,
                 name="Touch Result Button",
                 action=lambda: self.touch_template("tpl_result.png"),
                 max_retries=max_retries,
@@ -677,14 +754,14 @@ class FestivalAutomation(BaseAutomation):
                 cancel_checker=self.check_cancelled,
                 logger=self.structured_logger,
             )
-            if step11.execute() != StepResult.SUCCESS:
+            if step12.execute() != StepResult.SUCCESS:
                 return {
                     "success": False,
                     "pre_battle_details": pre_battle_details,
                     "post_battle_details": {},
                 }
 
-            # Step 12: Snapshot Result
+            # Step 13: Snapshot Result
             def _capture_result():
                 nonlocal screenshot_result
                 return (
@@ -693,8 +770,8 @@ class FestivalAutomation(BaseAutomation):
                     )
                 ) is not None
 
-            step12 = ExecutionStep(
-                step_num=12,
+            step13 = ExecutionStep(
+                step_num=13,
                 name="Snapshot Result",
                 action=_capture_result,
                 max_retries=max_retries,
@@ -703,7 +780,7 @@ class FestivalAutomation(BaseAutomation):
                 cancel_checker=self.check_cancelled,
                 logger=self.structured_logger,
             )
-            if step12.execute() != StepResult.SUCCESS:
+            if step13.execute() != StepResult.SUCCESS:
                 return {
                     "success": False,
                     "pre_battle_details": pre_battle_details,
@@ -759,8 +836,8 @@ class FestivalAutomation(BaseAutomation):
                 # Continue even if verification fails - don't retry
                 return True
 
-            step13 = ExecutionStep(
-                step_num=13,
+            step14 = ExecutionStep(
+                step_num=14,
                 name="Post-Battle Verification",
                 action=_verify_post,
                 max_retries=1,  # No retries, just verify once
@@ -769,28 +846,28 @@ class FestivalAutomation(BaseAutomation):
                 cancel_checker=self.check_cancelled,
                 logger=self.structured_logger,
             )
-            step13.execute()  # Always continue regardless of result
+            step14.execute()  # Always continue regardless of result
 
-            # ==================== CLEANUP ====================
+            # ==================== FINISHED ====================
 
-            self.structured_logger.subsection_header("CLEANUP")
+            self.structured_logger.subsection_header("FINISHED")
 
-            # Step 14: Touch OK buttons until none remain
-            step14 = ExecutionStep(
-                step_num=14,
+            # Step 15: Touch OK buttons until none remain
+            step15 = ExecutionStep(
+                step_num=15,
                 name="Touch OK (Close All Results)",
                 action=lambda: self.touch_template_while_exists(
-                    "tpl_ok.png", max_attempts=10, delay_between_touches=0.3
+                    "tpl_ok.png", max_attempts=3, delay_between_touches=0.3
                 )
-                >= 0,
+                > 0,
                 max_retries=1,
-                retry_delay=0.3,
+                retry_delay=0,
                 optional=True,
-                post_delay=0.3,
+                post_delay=0.5,
                 cancel_checker=self.check_cancelled,
                 logger=self.structured_logger,
             )
-            step14.execute()  # Optional, don't check result
+            step15.execute()  # Optional, don't check result
 
             # ==================== FINAL RESULT ====================
 

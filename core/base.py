@@ -565,3 +565,72 @@ class BaseAutomation:
         except Exception as e:
             logger.error(f"✗ Find and touch in ROI '{roi_name}': {e}")
             return False
+
+    def drag_and_drop(
+        self,
+        object_template: str,
+        target_template: str,
+        hold_duration: float = 0.3,
+        drag_duration: float = 0.5,
+        optional: bool = False,
+    ) -> bool:
+        """Drag object with continuous touch (hold then drag in single swipe).
+
+        Args:
+            object_template: Source template filename.
+            target_template: Target template filename.
+            hold_duration: Hold time at start position (default: 0.3s).
+            drag_duration: Drag time to target (default: 0.5s).
+            optional: Return True if object not found instead of False.
+
+        Returns:
+            bool: True if successful or optional=True when object not found.
+        """
+        try:
+            self.check_cancelled(
+                f"drag_and_drop({object_template} -> {target_template})"
+            )
+
+            templates = {
+                object_template: os.path.join(self.templates_path, object_template),
+                target_template: os.path.join(self.templates_path, target_template),
+            }
+
+            for name, path in templates.items():
+                if not os.path.exists(path):
+                    logger.warning(f"Template not found: {name}")
+                    return optional
+
+            obj_pos = exists(Template(templates[object_template]))
+            if not obj_pos:
+                logger.debug(f"Object '{object_template}' not found on screen")
+                return optional
+
+            target_pos = exists(Template(templates[target_template]))
+            if not target_pos:
+                logger.warning(f"Target '{target_template}' not found on screen")
+                return False
+
+            total_duration = hold_duration + drag_duration
+            steps = max(10, int(total_duration * 20))
+
+            logger.info(
+                f"Drag '{object_template}' → '{target_template}' "
+                f"({total_duration:.1f}s: {hold_duration:.1f}s hold + {drag_duration:.1f}s drag)"
+            )
+
+            if self.agent.safe_swipe(
+                obj_pos, target_pos, duration=total_duration, steps=steps
+            ):
+                sleep(self.wait_after_touch)
+                return True
+
+            logger.warning("Drag failed")
+            return False
+
+        except CancellationError:
+            return False
+        except Exception as e:
+            if not optional:
+                logger.error(f"Drag and drop error: {e}")
+            return optional

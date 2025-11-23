@@ -1,11 +1,11 @@
-"""Agent Module - Device interaction and OCR with enhanced performance."""
+"""Agent Module - Device interaction and OCR."""
 
 import time
-from typing import List, Optional, Tuple, Union, Any
+from typing import Any, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
-from airtest.core.api import connect_device, touch
+from airtest.core.api import connect_device, swipe, touch
 from airtest.core.error import AirtestError
 
 import core.oneocr_optimized as oneocr
@@ -19,7 +19,7 @@ from .utils import get_logger
 class EnhancedOcrEngine(oneocr.OcrEngine):
     """Enhanced OCR engine with direct NumPy array processing for better performance.
 
-    This class extends the optimized OcrEngine to process images directly from NumPy arrays,
+    This class extends the OcrEngine to process images directly from NumPy arrays,
     eliminating the overhead of encoding/decoding operations while maintaining thread safety.
     """
 
@@ -96,7 +96,7 @@ class Agent:
 
         try:
             self.ocr_engine = EnhancedOcrEngine()
-            self.logger.info("Enhanced OCR engine initialized")
+            self.logger.info("OCR engine initialized")
 
             if auto_connect:
                 if enable_retry:
@@ -254,10 +254,6 @@ class Agent:
         Returns:
             bool: True if touch successful, False otherwise.
         """
-        if not self.is_device_connected():
-            self.logger.error("Device not connected")
-            return False
-
         # Convert list to tuple if needed
         if isinstance(pos, list):
             if len(pos) != 2:
@@ -274,5 +270,42 @@ class Agent:
             return True
         except Exception as e:
             self.logger.error(f"Touch failed at {pos}: {e}")
+            self._device_verified = False
+            return False
+
+    def safe_swipe(
+        self,
+        v1: Union[Tuple[float, float], List[float]],
+        v2: Union[Tuple[float, float], List[float]],
+        vector: Optional[Union[Tuple[float, float], List[float]]] = None,
+        duration: float = 0.5,
+        steps: int = 5,
+        fingers: int = 1,
+    ) -> bool:
+        """Safely swipe from v1 to v2 or along vector.
+
+        Args:
+            v1: Start point (x, y).
+            v2: End point (x, y).
+            vector: Vector (x, y) to swipe along (alternative to v2).
+            duration: Duration of swipe in seconds.
+            steps: Number of steps for swipe interpolation.
+            fingers: Number of fingers to use.
+
+        Returns:
+            bool: True if swipe successful, False otherwise.
+        """
+        try:
+            swipe(
+                v1,
+                v2=v2,
+                vector=vector,
+                duration=duration,
+                steps=steps,
+                fingers=fingers,
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"Swipe failed: {e}")
             self._device_verified = False
             return False

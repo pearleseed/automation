@@ -1,32 +1,55 @@
-"""Shared utility functions."""
+"""
+Core Utilities Module
+
+This module provides shared utility functions for file operations, logging,
+and report generation used across the automation framework.
+"""
 
 import logging
 import os
 import sys
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
+# Initialize module logger
 logger = logging.getLogger(__name__)
 
 
+# ==================== FILE UTILS ====================
+
+
 def ensure_directory(path: str) -> None:
-    """Create directory if it doesn't exist."""
+    """Create directory if it doesn't exist.
+
+    Args:
+        path: The directory path to create.
+    """
     if not os.path.exists(path):
         os.makedirs(path)
         logger.info(f"Created directory: {path}")
 
 
+# ==================== LOGGING UTILS ====================
+
+
 def get_logger(name: str) -> logging.Logger:
-    """Get logger instance for module."""
+    """Get a standard logger instance for a module.
+
+    Args:
+        name: The name of the logger (usually __name__).
+
+    Returns:
+        logging.Logger: Configured logger instance.
+    """
     return logging.getLogger(name)
 
 
 class StructuredLogger:
-    """Enhanced logger with file output and structured formatting.
+    """Logger with file output and structured formatting.
 
     This class provides structured logging with clear visual separation of execution
-    stages, steps, and results. Supports both console and file output with different
-    formatting for better readability.
+    stages, steps, and results. It supports both console and file output with
+    different formatting for better readability.
     """
 
     def __init__(
@@ -43,12 +66,14 @@ class StructuredLogger:
         self.logger.setLevel(level)
         self.logger.propagate = False  # Prevent duplicate logs
 
-        # Clear existing handlers
+        # Clear existing handlers to avoid duplicates
         self.logger.handlers.clear()
 
         # Create formatters
+        # Console: Simpler format for readability
         console_formatter = logging.Formatter("%(levelname)-8s | %(message)s")
 
+        # File: Detailed format with timestamps and module names
         file_formatter = logging.Formatter(
             "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
@@ -68,40 +93,70 @@ class StructuredLogger:
             if log_dir:
                 ensure_directory(log_dir)
 
-            file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+            file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8-sig")
             file_handler.setLevel(level)
             file_handler.setFormatter(file_formatter)
             self.logger.addHandler(file_handler)
 
             self.log_file = log_file
 
-    def section_header(self, title: str, char: str = "=", width: int = 70):
-        """Log a section header for better visual separation."""
+    def section_header(self, title: str, char: str = "=", width: int = 70) -> None:
+        """Log a major section header for visual separation.
+
+        Args:
+            title: The title text to display.
+            char: The character to use for the separator line (default: "=").
+            width: The width of the separator line (default: 70).
+        """
         separator = char * width
         self.logger.info(separator)
         self.logger.info(f" {title}")
         self.logger.info(separator)
 
-    def subsection_header(self, title: str, char: str = "-", width: int = 70):
-        """Log a subsection header."""
+    def subsection_header(self, title: str, char: str = "-", width: int = 70) -> None:
+        """Log a subsection header.
+
+        Args:
+            title: The title text to display.
+            char: The character to use for the separator line (default: "-").
+            width: The width of the separator line (default: 70).
+        """
         separator = char * width
         self.logger.info(separator)
         self.logger.info(f" {title}")
         self.logger.info(separator)
 
-    def step(self, step_num: int, step_name: str, status: str = "START"):
-        """Log a step with clear formatting."""
+    def step(self, step_num: int, step_name: str, status: str = "START") -> None:
+        """Log a step start with clear formatting.
+
+        Args:
+            step_num: The step number.
+            step_name: The name/description of the step.
+            status: The status label (default: "START").
+        """
         self.logger.info(f"[STEP {step_num:2d}] {step_name} - {status}")
 
-    def step_success(self, step_num: int, step_name: str, details: str = ""):
-        """Log successful step completion."""
+    def step_success(self, step_num: int, step_name: str, details: str = "") -> None:
+        """Log successful step completion.
+
+        Args:
+            step_num: The step number.
+            step_name: The name/description of the step.
+            details: Optional additional details to log.
+        """
         msg = f"[STEP {step_num:2d}] ✓ {step_name} - SUCCESS"
         if details:
             msg += f" | {details}"
         self.logger.info(msg)
 
-    def step_failed(self, step_num: int, step_name: str, error: str = ""):
-        """Log failed step."""
+    def step_failed(self, step_num: int, step_name: str, error: str = "") -> None:
+        """Log failed step.
+
+        Args:
+            step_num: The step number.
+            step_name: The name/description of the step.
+            error: Optional error message or details.
+        """
         msg = f"[STEP {step_num:2d}] ✗ {step_name} - FAILED"
         if error:
             msg += f" | {error}"
@@ -109,38 +164,75 @@ class StructuredLogger:
 
     def step_retry(
         self, step_num: int, step_name: str, attempt: int, max_attempts: int
-    ):
-        """Log step retry."""
+    ) -> None:
+        """Log step retry attempt.
+
+        Args:
+            step_num: The step number.
+            step_name: The name/description of the step.
+            attempt: The current attempt number.
+            max_attempts: The maximum number of attempts allowed.
+        """
         self.logger.warning(
             f"[STEP {step_num:2d}] {step_name} - RETRY {attempt}/{max_attempts}"
         )
 
-    def info(self, msg: str):
-        """Log info message."""
+    def info(self, msg: str) -> None:
+        """Log an info message.
+
+        Args:
+            msg: The message to log.
+        """
         self.logger.info(msg)
 
-    def warning(self, msg: str):
-        """Log warning message."""
+    def warning(self, msg: str) -> None:
+        """Log a warning message.
+
+        Args:
+            msg: The message to log.
+        """
         self.logger.warning(msg)
 
-    def error(self, msg: str):
-        """Log error message."""
+    def error(self, msg: str) -> None:
+        """Log an error message.
+
+        Args:
+            msg: The message to log.
+        """
         self.logger.error(msg)
 
-    def debug(self, msg: str):
-        """Log debug message."""
+    def debug(self, msg: str) -> None:
+        """Log a debug message.
+
+        Args:
+            msg: The message to log.
+        """
         self.logger.debug(msg)
 
-    def stage_start(self, stage_idx: int, stage_name: str, stage_info: str = ""):
-        """Log stage start with prominent formatting."""
+    def stage_start(
+        self, stage_idx: int, stage_name: str, stage_info: str = ""
+    ) -> None:
+        """Log the start of a major execution stage.
+
+        Args:
+            stage_idx: The index/number of the stage.
+            stage_name: The name of the stage.
+            stage_info: Optional additional info about the stage.
+        """
         self.section_header(f"STAGE {stage_idx}: {stage_name}")
         if stage_info:
             self.info(f"Stage Info: {stage_info}")
         self.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self.info("")
 
-    def stage_end(self, stage_idx: int, success: bool, duration: float = 0):
-        """Log stage completion."""
+    def stage_end(self, stage_idx: int, success: bool, duration: float = 0) -> None:
+        """Log the completion of a major execution stage.
+
+        Args:
+            stage_idx: The index/number of the stage.
+            success: True if the stage completed successfully, False otherwise.
+            duration: The duration of the stage in seconds.
+        """
         status = "✓ COMPLETED SUCCESSFULLY" if success else "✗ FAILED"
         self.info("")
         if duration > 0:
@@ -148,8 +240,15 @@ class StructuredLogger:
         self.section_header(f"STAGE {stage_idx}: {status}")
         self.info("")
 
-    def automation_start(self, automation_name: str, config: Optional[dict] = None):
-        """Log automation start."""
+    def automation_start(
+        self, automation_name: str, config: Optional[dict] = None
+    ) -> None:
+        """Log the start of an entire automation process.
+
+        Args:
+            automation_name: The name of the automation.
+            config: Optional configuration dictionary to log.
+        """
         self.section_header(f"{automation_name} - AUTOMATION START", "=", 80)
         self.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         if self.log_file:
@@ -162,8 +261,14 @@ class StructuredLogger:
 
     def automation_end(
         self, automation_name: str, success: bool, summary: Optional[dict] = None
-    ):
-        """Log automation end."""
+    ) -> None:
+        """Log the end of an entire automation process.
+
+        Args:
+            automation_name: The name of the automation.
+            success: True if the automation completed successfully.
+            summary: Optional summary dictionary to log.
+        """
         self.info("")
         status = "✓ COMPLETED" if success else "✗ FAILED"
         self.section_header(f"{automation_name} - {status}", "=", 80)
@@ -175,19 +280,22 @@ class StructuredLogger:
         self.section_header("", "=", 80)
 
 
-def generate_html_report_content(data: list) -> str:
-    """Generate HTML report content from result data.
+# ==================== REPORTING UTILS ====================
+
+
+def generate_html_report_content(data: List[Dict[str, Any]]) -> str:
+    """Generate a styled HTML report from automation result data.
 
     Args:
-        data: List of result dictionaries.
+        data: List of result dictionaries containing test execution data.
 
     Returns:
-        String containing complete HTML report.
+        str: Complete HTML document string.
     """
     if not data:
         return "<html><body><h1>No Data</h1></body></html>"
 
-    # Calculate summary
+    # Calculate summary statistics
     total = len(data)
     ok_count = sum(1 for row in data if row.get("result") == "OK")
     ng_count = sum(1 for row in data if row.get("result") == "NG")
@@ -197,13 +305,14 @@ def generate_html_report_content(data: list) -> str:
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Get headers from first row, prioritizing common fields
+    # Determine table headers
+    # Prioritize common fields for better readability
     common_headers = ["test_case_id", "timestamp", "result", "error_message"]
     all_keys = set().union(*(d.keys() for d in data))
     other_headers = sorted([k for k in all_keys if k not in common_headers])
     headers = [h for h in common_headers if h in all_keys] + other_headers
 
-    # Generate rows
+    # Generate table rows
     rows_html = ""
     for row in data:
         result_class = row.get("result", "").lower()
@@ -213,6 +322,7 @@ def generate_html_report_content(data: list) -> str:
             rows_html += f"<td>{val}</td>"
         rows_html += "</tr>"
 
+    # Return complete HTML structure
     return f"""
 <!DOCTYPE html>
 <html lang="en">

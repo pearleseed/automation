@@ -1,16 +1,21 @@
 """
 Hopping Automation
 
-Hopping flow (World Hopping):
-1. touch(Template("tpl_world_map.png"))
-2. touch(Template("tpl_hop_button.png"))
-3. snapshot -> save to folder (hop_01_before_hop.png)
-4. touch(Template("tpl_confirm_hop.png"))
-5. Wait for loading
-6. snapshot -> save to folder (hop_02_after_hop.png)
-7. ROI scan -> check new world
-8. Verify hop success
-9. Repeat according to hop count
+Standard flow for world hopping with OCR-based verification:
+
+1. Check current world -> snapshot & OCR world name
+2. Touch world map button (tpl_world_map.png)
+3. Touch hop button (tpl_hop_button.png)
+4. Confirm hop (tpl_confirm_hop.png)
+5. Wait for loading transition (configurable duration)
+6. Check new world -> snapshot & OCR world name
+7. Verify hop success - Compare world names (before vs after)
+
+OCR verification:
+- World names extracted from ROI using OCR
+- Text normalized using TextProcessor for accurate comparison
+- Enhanced comparison detects OCR variations (>90% similarity = same world)
+- Hop success confirmed when world names differ significantly
 """
 
 import os

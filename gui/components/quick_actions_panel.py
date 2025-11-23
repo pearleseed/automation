@@ -2,7 +2,6 @@
 Quick Actions Panel Component
 """
 
-import tkinter as tk
 from tkinter import ttk
 from typing import Any, Dict
 

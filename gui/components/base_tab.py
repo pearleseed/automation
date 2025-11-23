@@ -797,7 +797,7 @@ class BaseAutomationTab(ttk.Frame):
             )
 
             if filename:
-                with open(filename, "w", newline="", encoding="utf-8") as f:
+                with open(filename, "w", newline="", encoding="utf-8-sig") as f:
                     writer = csv.DictWriter(f, fieldnames=columns)
                     writer.writeheader()
                     writer.writerows(data_list)

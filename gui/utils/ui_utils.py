@@ -6,7 +6,7 @@ import json
 import os
 import tkinter as tk
 from tkinter import filedialog, messagebox
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 from core.utils import get_logger
 
@@ -161,7 +161,7 @@ class UIUtils:
             return False
 
         try:
-            with open(filename, "w", encoding="utf-8") as f:
+            with open(filename, "w", encoding="utf-8-sig") as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
             messagebox.showinfo("Success", f"Config saved to:\n{filename}")
             logger.info(f"Config saved: {filename}")
@@ -183,7 +183,7 @@ class UIUtils:
             return None
 
         try:
-            with open(filename, "r", encoding="utf-8") as f:
+            with open(filename, "r", encoding="utf-8-sig") as f:
                 config = json.load(f)
             messagebox.showinfo("Success", "Config loaded successfully!")
             logger.info(f"Config loaded: {filename}")

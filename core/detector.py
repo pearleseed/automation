@@ -140,7 +140,7 @@ class TextProcessor:
         if remove_spaces:
             result = result.replace(" ", "").replace("\u3000", "")
 
-        # Remove common punctuation (optimized with translate)
+        # Remove common punctuation
         result = result.translate(TextProcessor._CLEAN_PUNCTUATION)
 
         return result
@@ -190,7 +190,7 @@ class TextProcessor:
         if not text:
             return []
 
-        # Clean text (optimized)
+        # Clean text
         cleaned = text.strip()
         if clean_chars:
             trans_table = str.maketrans("", "", "".join(clean_chars))
@@ -820,8 +820,8 @@ class TemplateMatcher:
                     )
                 )
 
-        # Optimized duplicate removal
-        unique_items = self._remove_duplicates_optimized(found_items, min_distance=10)
+        # Duplicate removal
+        unique_items = self._remove_duplicates(found_items, min_distance=10)
         logger.info(f"Template matching found {len(unique_items)} items")
         return unique_items
 
@@ -846,11 +846,11 @@ class TemplateMatcher:
             return []
 
     @staticmethod
-    def _remove_duplicates_optimized(
+    def _remove_duplicates(
         items: List[DetectionResult], min_distance: int
     ) -> List[DetectionResult]:
         """
-        Remove duplicate detections (optimized algorithm).
+        Remove duplicate detections.
         Groups by item name first, then uses spatial locality.
         """
         if not items:

@@ -1,14 +1,22 @@
 """
 Gacha Automation
 
-Gacha flow:
-1. Find and touch gacha banner (scroll if needed)
-2. Touch single/multi pull button
-3. Snapshot before pull
+Standard flow for gacha banner pulls with template-based verification:
+
+1. Find & touch gacha banner (scroll if needed)
+2. Choose pull type (single/multi pull button)
+3. Snapshot before pull -> save (banner_01_before.png)
 4. Confirm pull (tpl_ok.png)
-5. Skip animation (tpl_skip.png)
-6. Snapshot after pull
-7. Check SSR/SR + Swimsuit -> Special snapshot if both found
+5. Skip animation (tpl_skip.png) - optional
+6. Snapshot after pull -> save (banner_01_after.png)
+7. Result verification - Check SSR/SR + Swimsuit templates
+   - If both found -> Special snapshot saved
+
+Template matching:
+- Banners scrolled until found (max 10 attempts)
+- Rarity templates (tpl_ssr.png, tpl_sr.png) matched on result screen
+- Swimsuit character templates matched in banner folder
+- Special snapshots saved when both rarity and character match
 """
 
 import glob
@@ -432,7 +440,9 @@ class GachaAutomation(BaseAutomation):
         start_time = time.time()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = f"{self.results_dir}/gacha_{timestamp}.csv"
-        result_writer = ResultWriter(output_path, formats=["csv", "json", "html"], auto_write=True)
+        result_writer = ResultWriter(
+            output_path, formats=["csv", "json", "html"], auto_write=True
+        )
 
         # Calculate total pulls
         total_pulls = sum(g.get("num_pulls", 0) for g in gachas_config)

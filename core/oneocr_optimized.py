@@ -364,7 +364,7 @@ class OcrEngine:
         rgba_bytes = image.tobytes()
         byte_size = len(rgba_bytes)
 
-        # Optimized BGRA conversion for small images using in-place operations
+        # BGRA conversion for small images using in-place operations
         if byte_size < self._small_image_threshold:
             # Reuse buffer if possible
             if self._bgra_buffer is None or len(self._bgra_buffer) < byte_size:

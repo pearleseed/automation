@@ -201,7 +201,7 @@ class LogViewer:
         if filename:
             try:
                 content = self.log_text.get("1.0", "end")
-                with open(filename, "w", encoding="utf-8") as f:
+                with open(filename, "w", encoding="utf-8-sig") as f:
                     f.write(content)
                 UIUtils.show_info(self.parent, "Success", f"Logs saved to:\n{filename}")
             except Exception as e:

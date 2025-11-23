@@ -34,7 +34,7 @@ class GachaTab(ttk.Frame):
         self.rarity_var = tk.StringVar(value="ssr")
         self.num_pulls_var = tk.StringVar(value="10")
         self.pull_type_var = tk.StringVar(value="single")
-        self.templates_path_var = tk.StringVar(value="./templates")
+        self.templates_path_var = tk.StringVar(value="./templates/jp")
         self.status_var = tk.StringVar(value="Ready")
         self.queue_count_var = tk.StringVar(value="0 banners queued")
 
@@ -322,7 +322,7 @@ class GachaTab(ttk.Frame):
             ).pack(pady=5)
             tk.Label(
                 error_frame,
-                text=f"Error: {str(e)}", # type: ignore
+                text=f"Error: {str(e)}",  # type: ignore
                 font=("", 9),
                 foreground="red",
                 bg="#f5f5f5",
