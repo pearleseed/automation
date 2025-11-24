@@ -327,7 +327,7 @@ class RankExtractor:
 
 
 class MoneyExtractor:
-    """Extract money/currency from text."""
+    """Extract money/currency from text. Handles OCR 'x' → '1' misrecognition."""
 
     NUMBER_PATTERN = re.compile(r"\d+")
     CLEAN_CHARS = str.maketrans("", "", ",× xX ")
@@ -335,13 +335,19 @@ class MoneyExtractor:
     def extract(self, text: str) -> ExtractionResult:
         if not text:
             return ExtractionResult(None, text, 0.0, False)
-        numbers = self.NUMBER_PATTERN.findall(text.strip().translate(self.CLEAN_CHARS))
+        
+        cleaned = text.strip().translate(self.CLEAN_CHARS)
+        numbers = self.NUMBER_PATTERN.findall(cleaned)
+        
+        if not numbers:
+            return ExtractionResult(None, text, 0.0, False)
+        
+        # Skip leading '1' if followed by another number (likely misread 'x')
+        if len(numbers) > 1 and numbers[0] == "1":
+            numbers = numbers[1:]
+        
         try:
-            return (
-                ExtractionResult(int("".join(numbers)), text, 0.9, True)
-                if numbers
-                else ExtractionResult(None, text, 0.0, False)
-            )
+            return ExtractionResult(int("".join(numbers)), text, 0.9, True)
         except ValueError:
             return ExtractionResult(None, text, 0.0, False)
 

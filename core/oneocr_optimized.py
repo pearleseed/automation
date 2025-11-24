@@ -24,7 +24,10 @@ from PIL import Image
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "oneocr")
+# Try local .config/oneocr first, then fall back to home directory
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_local_config = os.path.join(_project_root, ".config", "oneocr")
+CONFIG_DIR = _local_config if os.path.isdir(_local_config) else os.path.join(os.path.expanduser("~"), ".config", "oneocr")
 MODEL_NAME = "oneocr.onemodel"
 DLL_NAME = "oneocr.dll"
 MODEL_KEY = b'kj)TGtrK>f]b[Piow.gU+nC@s""""""4'
@@ -460,7 +463,7 @@ class OcrEngine:
         if isinstance(data, bytes):
             data_ptr = (c_ubyte * len(data)).from_buffer_copy(data)
         else:
-            data_ptr = ctypes.cast(ctypes.c_void_p(data), c_ubyte_p)
+            data_ptr = ctypes.cast(ctypes.c_void_p(int(data)), c_ubyte_p)
 
         img_struct = ImageStructure(
             type=3,
@@ -560,7 +563,7 @@ class OcrEngine:
             List of line dictionaries.
         """
         # Pre-allocate list for better performance
-        lines = [None] * line_count
+        lines: list = [None] * line_count
         for idx in range(line_count):
             lines[idx] = self._process_line(ocr_result, idx)
         return lines
@@ -604,7 +607,7 @@ class OcrEngine:
             return []
 
         # Pre-allocate list for better performance
-        words = [None] * word_count
+        words: list = [None] * word_count
         for idx in range(word_count):
             words[idx] = self._process_word(line_handle, idx)
         return words
@@ -741,7 +744,6 @@ def serve(host: str = "0.0.0.0", port: int = 8001, workers: int = 1):
         The service accepts POST requests with image data in the body.
         Supported formats: JPEG, PNG, BMP, and other PIL-compatible formats.
     """
-    import json
     from io import BytesIO
 
     import uvicorn

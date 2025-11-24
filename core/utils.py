@@ -290,7 +290,7 @@ def generate_html_report_content(data: List[Dict[str, Any]]) -> str:
         data: List of result dictionaries containing test execution data.
 
     Returns:
-        str: Complete HTML document string.
+        str: Complete HTML document string with enhanced visualizations.
     """
     if not data:
         return "<html><body><h1>No Data</h1></body></html>"
@@ -302,27 +302,47 @@ def generate_html_report_content(data: List[Dict[str, Any]]) -> str:
     skip_count = sum(1 for row in data if row.get("result") == "SKIP")
     error_count = sum(1 for row in data if row.get("result") == "ERROR")
     success_rate = (ok_count / total * 100) if total > 0 else 0
+    fail_rate = (ng_count / total * 100) if total > 0 else 0
+
+    # Calculate percentages for progress bars
+    ok_percent = (ok_count / total * 100) if total > 0 else 0
+    ng_percent = (ng_count / total * 100) if total > 0 else 0
+    skip_percent = (skip_count / total * 100) if total > 0 else 0
+    error_percent = (error_count / total * 100) if total > 0 else 0
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # Determine table headers
-    # Prioritize common fields for better readability
     common_headers = ["test_case_id", "timestamp", "result", "error_message"]
     all_keys = set().union(*(d.keys() for d in data))
     other_headers = sorted([k for k in all_keys if k not in common_headers])
     headers = [h for h in common_headers if h in all_keys] + other_headers
 
-    # Generate table rows
+    # Generate table rows with enhanced result badges
     rows_html = ""
-    for row in data:
-        result_class = row.get("result", "").lower()
+    for idx, row in enumerate(data, 1):
+        result = row.get("result", "").upper()
+        result_class = result.lower()
+
+        # Create badge for result column
+        badge_class = {
+            "OK": "badge-ok",
+            "NG": "badge-ng",
+            "SKIP": "badge-skip",
+            "ERROR": "badge-error",
+        }.get(result, "badge-default")
+
         rows_html += f"<tr class='{result_class}'>"
+        rows_html += f"<td class='row-number'>{idx}</td>"
+
         for header in headers:
             val = row.get(header, "")
-            rows_html += f"<td>{val}</td>"
+            if header == "result":
+                rows_html += f"<td><span class='badge {badge_class}'>{val}</span></td>"
+            else:
+                rows_html += f"<td>{val}</td>"
         rows_html += "</tr>"
 
-    # Return complete HTML structure
     return f"""
 <!DOCTYPE html>
 <html lang="en">
@@ -331,60 +351,365 @@ def generate_html_report_content(data: List[Dict[str, Any]]) -> str:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Automation Report - {timestamp}</title>
     <style>
-        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; color: #333; }}
-        .container {{ max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-        h1 {{ color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 10px; }}
-        .summary {{ display: flex; gap: 20px; margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 6px; }}
-        .summary-item {{ flex: 1; text-align: center; }}
-        .summary-value {{ font-size: 24px; font-weight: bold; color: #2c3e50; }}
-        .summary-label {{ font-size: 14px; color: #7f8c8d; text-transform: uppercase; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px; }}
-        th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #eee; }}
-        th {{ background-color: #f8f9fa; font-weight: 600; color: #2c3e50; position: sticky; top: 0; }}
-        tr:hover {{ background-color: #f1f1f1; }}
-        .ok {{ border-left: 4px solid #2ecc71; }}
-        .ng {{ border-left: 4px solid #e74c3c; background-color: #fff5f5; }}
-        .skip {{ border-left: 4px solid #f1c40f; }}
-        .error {{ border-left: 4px solid #e74c3c; background-color: #ffe6e6; }}
-        .badge {{ padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }}
-        .badge-ok {{ background: #d4edda; color: #155724; }}
-        .badge-ng {{ background: #f8d7da; color: #721c24; }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+            color: #333;
+        }}
+        .container {{ 
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }}
+        .header {{
+            background: #fff;
+            border-bottom: 1px solid #e0e0e0;
+            padding: 20px 30px;
+        }}
+        .header h1 {{ 
+            font-size: 20px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 4px;
+        }}
+        .header .timestamp {{
+            font-size: 12px;
+            color: #666;
+        }}
+        .content {{ padding: 30px; }}
+        
+        /* Summary Cards */
+        .summary-grid {{
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 12px;
+            margin-bottom: 24px;
+        }}
+        .summary-card {{
+            background: #fafafa;
+            border-radius: 4px;
+            padding: 16px;
+            text-align: center;
+            border: 1px solid #e0e0e0;
+        }}
+        
+        .summary-value {{
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            line-height: 1;
+            color: #333;
+        }}
+        
+        .summary-label {{
+            font-size: 11px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #666;
+        }}
+        .summary-percent {{
+            font-size: 11px;
+            margin-top: 2px;
+            color: #999;
+        }}
+        
+        /* Progress Bar Section */
+        .progress-section {{
+            background: #fafafa;
+            border-radius: 4px;
+            padding: 20px;
+            margin-bottom: 24px;
+            border: 1px solid #e0e0e0;
+        }}
+        .progress-section h2 {{
+            font-size: 13px;
+            margin-bottom: 12px;
+            color: #333;
+            font-weight: 600;
+        }}
+        .progress-bar-container {{
+            background: #e0e0e0;
+            border-radius: 4px;
+            height: 24px;
+            overflow: hidden;
+            display: flex;
+        }}
+        .progress-segment {{
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 500;
+            font-size: 11px;
+        }}
+        .progress-ok {{ background: #4caf50; }}
+        .progress-ng {{ background: #f44336; }}
+        .progress-skip {{ background: #ff9800; }}
+        .progress-error {{ background: #ff5722; }}
+        
+        .progress-legend {{
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }}
+        .legend-item {{
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            color: #666;
+        }}
+        .legend-color {{
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }}
+        
+        /* Table Section */
+        .table-section {{
+            margin-top: 24px;
+        }}
+        .table-section h2 {{
+            font-size: 13px;
+            margin-bottom: 12px;
+            color: #333;
+            font-weight: 600;
+        }}
+        .table-controls {{
+            margin-bottom: 12px;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }}
+        .search-box {{
+            flex: 1;
+            min-width: 200px;
+            padding: 6px 10px;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            font-size: 12px;
+        }}
+        .filter-btn {{
+            padding: 6px 12px;
+            border: 1px solid #e0e0e0;
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 500;
+        }}
+        .filter-btn:hover {{
+            background: #fafafa;
+        }}
+        .filter-btn.active {{
+            background: #333;
+            color: white;
+            border-color: #333;
+        }}
+        
+        .table-wrapper {{
+            overflow-x: auto;
+            border-radius: 4px;
+            border: 1px solid #e0e0e0;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }}
+        th, td {{
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid #f0f0f0;
+        }}
+        th {{
+            background: #fafafa;
+            font-weight: 600;
+            color: #333;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            font-size: 11px;
+        }}
+        tbody tr:hover {{
+            background-color: #fafafa;
+        }}
+        .row-number {{
+            font-weight: 500;
+            color: #999;
+            width: 50px;
+        }}
+        
+        /* Result badges */
+        .badge {{
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }}
+        .badge-ok {{ background: #e8f5e9; color: #2e7d32; }}
+        .badge-ng {{ background: #ffebee; color: #c62828; }}
+        .badge-skip {{ background: #fff3e0; color: #ef6c00; }}
+        .badge-error {{ background: #fce4ec; color: #c2185b; }}
+        .badge-default {{ background: #f5f5f5; color: #616161; }}
+        
+        /* Footer */
+        .footer {{
+            text-align: center;
+            padding: 16px;
+            color: #999;
+            font-size: 11px;
+            border-top: 1px solid #e0e0e0;
+        }}
+        
+        /* Responsive */
+        @media (max-width: 768px) {{
+            .summary-grid {{ grid-template-columns: repeat(2, 1fr); }}
+            .header h1 {{ font-size: 18px; }}
+            .summary-value {{ font-size: 24px; }}
+        }}
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Automation Report</h1>
-        <div class="summary">
-            <div class="summary-item">
-                <div class="summary-value">{total}</div>
-                <div class="summary-label">Total Tests</div>
+        <div class="header">
+            <h1>Automation Test Report</h1>
+            <div class="timestamp">Generated: {timestamp}</div>
+        </div>
+        
+        <div class="content">
+            <!-- Summary Cards -->
+            <div class="summary-grid">
+                <div class="summary-card total">
+                    <div class="summary-value">{total}</div>
+                    <div class="summary-label">Total Tests</div>
+                </div>
+                <div class="summary-card passed">
+                    <div class="summary-value">{ok_count}</div>
+                    <div class="summary-label">Passed</div>
+                    <div class="summary-percent">{ok_percent:.1f}%</div>
+                </div>
+                <div class="summary-card failed">
+                    <div class="summary-value">{ng_count}</div>
+                    <div class="summary-label">Failed</div>
+                    <div class="summary-percent">{ng_percent:.1f}%</div>
+                </div>
+                <div class="summary-card skipped">
+                    <div class="summary-value">{skip_count}</div>
+                    <div class="summary-label">Skipped</div>
+                    <div class="summary-percent">{skip_percent:.1f}%</div>
+                </div>
+                <div class="summary-card error">
+                    <div class="summary-value">{error_count}</div>
+                    <div class="summary-label">Errors</div>
+                    <div class="summary-percent">{error_percent:.1f}%</div>
+                </div>
             </div>
-            <div class="summary-item">
-                <div class="summary-value" style="color: #2ecc71">{ok_count}</div>
-                <div class="summary-label">Passed</div>
+            
+            <!-- Progress Bar -->
+            <div class="progress-section">
+                <h2>Test Results Distribution</h2>
+                <div class="progress-bar-container">
+                    {f'<div class="progress-segment progress-ok" style="width: {ok_percent}%">{ok_count if ok_count > 0 else ""}</div>' if ok_count > 0 else ''}
+                    {f'<div class="progress-segment progress-ng" style="width: {ng_percent}%">{ng_count if ng_count > 0 else ""}</div>' if ng_count > 0 else ''}
+                    {f'<div class="progress-segment progress-skip" style="width: {skip_percent}%">{skip_count if skip_count > 0 else ""}</div>' if skip_count > 0 else ''}
+                    {f'<div class="progress-segment progress-error" style="width: {error_percent}%">{error_count if error_count > 0 else ""}</div>' if error_count > 0 else ''}
+                </div>
+                <div class="progress-legend">
+                    <div class="legend-item">
+                        <div class="legend-color progress-ok"></div>
+                        <span>Passed ({ok_percent:.1f}%)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color progress-ng"></div>
+                        <span>Failed ({ng_percent:.1f}%)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color progress-skip"></div>
+                        <span>Skipped ({skip_percent:.1f}%)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color progress-error"></div>
+                        <span>Errors ({error_percent:.1f}%)</span>
+                    </div>
+                </div>
             </div>
-            <div class="summary-item">
-                <div class="summary-value" style="color: #e74c3c">{ng_count}</div>
-                <div class="summary-label">Failed</div>
-            </div>
-            <div class="summary-item">
-                <div class="summary-value">{success_rate:.1f}%</div>
-                <div class="summary-label">Success Rate</div>
+            
+            <!-- Table Section -->
+            <div class="table-section">
+                <h2>Detailed Test Results</h2>
+                <div class="table-controls">
+                    <input type="text" class="search-box" placeholder="Search test cases..." onkeyup="filterTable()">
+                    <button class="filter-btn active" onclick="filterByStatus('all')">All</button>
+                    <button class="filter-btn" onclick="filterByStatus('ok')">Passed</button>
+                    <button class="filter-btn" onclick="filterByStatus('ng')">Failed</button>
+                    <button class="filter-btn" onclick="filterByStatus('skip')">Skipped</button>
+                    <button class="filter-btn" onclick="filterByStatus('error')">Errors</button>
+                </div>
+                <div class="table-wrapper">
+                    <table id="resultsTable">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                {''.join(f'<th>{h.replace("_", " ").title()}</th>' for h in headers)}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rows_html}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
-        <div style="overflow-x: auto;">
-            <table>
-                <thead>
-                    <tr>
-                        {''.join(f'<th>{h}</th>' for h in headers)}
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows_html}
-                </tbody>
-            </table>
+        
+        <div class="footer">
+            Generated by Automation Framework | {timestamp}
         </div>
     </div>
+    
+    <script>
+        function filterTable() {{
+            const input = document.querySelector('.search-box');
+            const filter = input.value.toUpperCase();
+            const table = document.getElementById('resultsTable');
+            const rows = table.getElementsByTagName('tr');
+            
+            for (let i = 1; i < rows.length; i++) {{
+                const row = rows[i];
+                const text = row.textContent || row.innerText;
+                row.style.display = text.toUpperCase().indexOf(filter) > -1 ? '' : 'none';
+            }}
+        }}
+        
+        function filterByStatus(status) {{
+            const table = document.getElementById('resultsTable');
+            const rows = table.getElementsByTagName('tr');
+            const buttons = document.querySelectorAll('.filter-btn');
+            
+            buttons.forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            for (let i = 1; i < rows.length; i++) {{
+                const row = rows[i];
+                if (status === 'all') {{
+                    row.style.display = '';
+                }} else {{
+                    row.style.display = row.classList.contains(status) ? '' : 'none';
+                }}
+            }}
+        }}
+    </script>
 </body>
 </html>
 """

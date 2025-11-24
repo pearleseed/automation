@@ -1089,37 +1089,40 @@ class FestivalAutomation(BaseAutomation):
                 else:
                     failed_count += 1
 
-                # Prepare detailed fields for CSV
-                extra_fields = {}
+                # Prepare result data with only necessary fields
+                result_data = {
+                    "test_case_id": test_case.get("test_case_id"),
+                    "フェス名": stage_data.get("フェス名", ""),
+                    "フェスランク": stage_data.get("フェスランク", ""),
+                }
 
-                # Add pre-battle verification results
+                # Add pre-battle verification results (expected, extracted, status)
                 for field, details in pre_battle_details.items():
                     status = details.get("status", "unknown")
-                    extra_fields[f"pre_{field}_status"] = (
-                        "OK" if status == "match" else "NG"
-                    )
-                    extra_fields[f"pre_{field}_expected"] = details.get("expected", "")
-                    extra_fields[f"pre_{field}_extracted"] = details.get(
+                    result_data[f"pre_{field}_expected"] = details.get("expected", "")
+                    result_data[f"pre_{field}_extracted"] = details.get(
                         "extracted_value", ""
+                    )
+                    result_data[f"pre_{field}_status"] = (
+                        "OK" if status == "match" else "NG"
                     )
 
-                # Add post-battle verification results
+                # Add post-battle verification results (expected, extracted, status)
                 for field, details in post_battle_details.items():
                     status = details.get("status", "unknown")
-                    extra_fields[f"post_{field}_status"] = (
-                        "OK" if status == "match" else "NG"
-                    )
-                    extra_fields[f"post_{field}_expected"] = details.get("expected", "")
-                    extra_fields[f"post_{field}_extracted"] = details.get(
+                    result_data[f"post_{field}_expected"] = details.get("expected", "")
+                    result_data[f"post_{field}_extracted"] = details.get(
                         "extracted_value", ""
+                    )
+                    result_data[f"post_{field}_status"] = (
+                        "OK" if status == "match" else "NG"
                     )
 
                 # Save result (ResultWriter auto-writes immediately)
                 result_writer.add_result(
-                    test_case,
+                    result_data,
                     ResultWriter.RESULT_OK if is_ok else ResultWriter.RESULT_NG,
                     error_message=None if is_ok else "Verification failed",
-                    extra_fields=extra_fields,
                 )
 
                 # Progress log

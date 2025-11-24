@@ -112,8 +112,40 @@ def write_csv(
             # Prioritize common fields for better readability
             common_fields = ["test_case_id", "timestamp", "result", "error_message"]
             ordered_fields = [f for f in common_fields if f in all_keys]
-            remaining_fields = sorted([k for k in all_keys if k not in ordered_fields])
-            fieldnames = ordered_fields + remaining_fields
+
+            # Add フェス名 and フェスランク after common fields
+            festival_fields = ["フェス名", "フェスランク"]
+            ordered_fields.extend([f for f in festival_fields if f in all_keys])
+
+            # Sort remaining fields with custom order: group by type (expected, extracted, status)
+            # This makes it easier to compare expected vs extracted values
+            remaining_keys = [k for k in all_keys if k not in ordered_fields]
+
+            # Separate pre_ and post_ fields
+            pre_fields = [k for k in remaining_keys if k.startswith("pre_")]
+            post_fields = [k for k in remaining_keys if k.startswith("post_")]
+            other_fields = [
+                k for k in remaining_keys if not k.startswith(("pre_", "post_"))
+            ]
+
+            # Group fields by suffix type for better readability
+            def sort_verification_fields_by_type(fields, prefix):
+                # Separate by suffix type
+                expected_fields = sorted([f for f in fields if f.endswith("_expected")])
+                extracted_fields = sorted(
+                    [f for f in fields if f.endswith("_extracted")]
+                )
+                status_fields = sorted([f for f in fields if f.endswith("_status")])
+
+                # Return in order: all expected, all extracted, all status
+                return expected_fields + extracted_fields + status_fields
+
+            pre_ordered = sort_verification_fields_by_type(pre_fields, "pre_")
+            post_ordered = sort_verification_fields_by_type(post_fields, "post_")
+
+            fieldnames = (
+                ordered_fields + pre_ordered + post_ordered + sorted(other_fields)
+            )
 
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
