@@ -40,6 +40,7 @@ class GachaTab(ttk.Frame):
 
         self._setup_ui()
         self.load_banners()
+        self._setup_keyboard_shortcuts()
 
     def _setup_ui(self):
         """Setup main UI with improved layout."""
@@ -244,6 +245,24 @@ class GachaTab(ttk.Frame):
             wraplength=250,
             justify="left",
         ).pack(fill="x")
+        
+        # Keyboard shortcuts hint
+        shortcuts_frame = ttk.LabelFrame(parent, text="Keyboard Shortcuts", padding=6)
+        shortcuts_frame.pack(fill="x", pady=(5, 0))
+        
+        shortcuts_text = (
+            "Stop Automation:\n"
+            "• Ctrl+Q\n"
+            "• ESC (Emergency)\n"
+            "• F9"
+        )
+        ttk.Label(
+            shortcuts_frame,
+            text=shortcuts_text,
+            font=("Segoe UI", 8),
+            foreground="#666",
+            justify="left",
+        ).pack(anchor="w")
 
     def _browse_templates(self):
         """Browse templates folder."""
@@ -647,10 +666,18 @@ class GachaTab(ttk.Frame):
 
         threading.Thread(target=run, daemon=True).start()
 
-    def _stop(self):
-        """Stop automation."""
-        if messagebox.askyesno("Confirm", "Stop automation?"):
-            self._set_running(False)
+    def _stop(self, skip_confirm: bool = False):
+        """Stop automation.
+        
+        Args:
+            skip_confirm: If True, skip confirmation dialog (used for keyboard shortcuts)
+        """
+        if not skip_confirm:
+            if not messagebox.askyesno("Confirm", "Stop automation?"):
+                return
+        
+        self._set_running(False)
+        logger.info("Gacha automation stopped by user")
 
     def _set_running(self, running: bool):
         """Update UI state."""
@@ -668,3 +695,27 @@ class GachaTab(ttk.Frame):
         else:
             self.status_var.set("Failed")
             messagebox.showerror("Error", f"Failed!\n\n{error}" if error else "Failed!")
+
+    def _setup_keyboard_shortcuts(self):
+        """Setup keyboard shortcuts for quick actions.
+        
+        Shortcuts:
+        - Ctrl+Q: Stop automation
+        - ESC: Stop automation (emergency stop)
+        - F9: Stop automation
+        """
+        self.bind_all("<Control-q>", self._handle_stop_shortcut)
+        self.bind_all("<Escape>", self._handle_stop_shortcut)
+        self.bind_all("<F9>", self._handle_stop_shortcut)
+        
+        logger.info("Gacha tab: Keyboard shortcuts enabled (Ctrl+Q, ESC, F9 to stop)")
+
+    def _handle_stop_shortcut(self, event):
+        """Handle keyboard shortcut for stopping automation.
+        
+        Only triggers if automation is currently running.
+        """
+        if self.is_running:
+            logger.info(f"Stop shortcut triggered: {event.keysym}")
+            self._stop(skip_confirm=True)  # Skip confirmation for quick stop
+            return "break"  # Prevent event propagation

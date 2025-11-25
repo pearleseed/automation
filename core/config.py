@@ -62,9 +62,9 @@ DETECTOR_CONFIG: Dict[str, Any] = {
         "templates_dir": DEFAULT_PATHS["templates"],  # Templates directory
         "threshold": 0.85,  # Match threshold (0.0-1.0)
         "method": "TM_CCOEFF_NORMED",  # Matching method
-        "min_distance": 10,  # Min distance for duplicates
+        "min_distance": 15,  # Min distance for duplicates
     },
-    "quantity_extraction": {  # OCR region for YOLO quantity
+    "quantity_extraction": {  # OCR region for quantity
         "offset_x": 30,  # Offset X from bbox right
         "offset_y": 0,  # Offset Y from bbox bottom
         "roi_width": 80,  # OCR region width
@@ -185,6 +185,3 @@ def merge_config(
         else:
             result[key] = value
     return result
-
-
-logger.info("Configuration module loaded successfully")

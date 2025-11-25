@@ -84,6 +84,9 @@ class BaseAutomationTab(ttk.Frame):
 
         self._setup_left_column(left_frame)
         self._setup_right_column(right_frame)
+        
+        # Setup keyboard shortcuts for stopping automation
+        self._setup_keyboard_shortcuts()
 
     def _setup_left_column(self, parent):
         """Setup left column with common configuration sections."""
@@ -242,6 +245,24 @@ class BaseAutomationTab(ttk.Frame):
             justify="left",
         )
         status_label.pack(fill="x")
+        
+        # Keyboard shortcuts hint
+        shortcuts_frame = ttk.LabelFrame(parent, text="Keyboard Shortcuts", padding=8)
+        shortcuts_frame.pack(fill="x", pady=5)
+        
+        shortcuts_text = (
+            "Stop Automation:\n"
+            "• Ctrl+Q\n"
+            "• ESC (Emergency)\n"
+            "• F9"
+        )
+        ttk.Label(
+            shortcuts_frame,
+            text=shortcuts_text,
+            font=("Segoe UI", 8),
+            foreground="#666",
+            justify="left",
+        ).pack(anchor="w")
 
     # Common file browsing methods
     def browse_file(self):
@@ -1030,10 +1051,15 @@ class BaseAutomationTab(ttk.Frame):
         if running:
             self.status_var.set("Running...")
 
-    def stop_automation(self):
-        """Stop running automation."""
-        if not messagebox.askyesno("Confirm", "Stop automation?"):
-            return
+    def stop_automation(self, skip_confirm: bool = False):
+        """Stop running automation.
+        
+        Args:
+            skip_confirm: If True, skip confirmation dialog (used for keyboard shortcuts)
+        """
+        if not skip_confirm:
+            if not messagebox.askyesno("Confirm", "Stop automation?"):
+                return
 
         self.thread_cancel_event.set()
         self.status_var.set("Stopping...")
@@ -1141,3 +1167,29 @@ class BaseAutomationTab(ttk.Frame):
         """Clear cache."""
         if messagebox.askyesno("Confirm", "Clear all cache files?"):
             messagebox.showinfo("Info", "Cache cleared!")
+
+    def _setup_keyboard_shortcuts(self):
+        """Setup keyboard shortcuts for quick actions.
+        
+        Shortcuts:
+        - Ctrl+Q: Stop automation
+        - ESC: Stop automation (emergency stop)
+        - F9: Stop automation
+        """
+        # Bind to the tab frame itself
+        self.bind_all("<Control-q>", self._handle_stop_shortcut)
+        self.bind_all("<Escape>", self._handle_stop_shortcut)
+        self.bind_all("<F9>", self._handle_stop_shortcut)
+        
+        logger.info(f"{self.tab_name} tab: Keyboard shortcuts enabled (Ctrl+Q, ESC, F9 to stop)")
+
+    def _handle_stop_shortcut(self, event):
+        """Handle keyboard shortcut for stopping automation.
+        
+        Only triggers if automation is currently running in this tab.
+        """
+        # Only stop if this automation is running
+        if self.is_running:
+            logger.info(f"Stop shortcut triggered: {event.keysym}")
+            self.stop_automation(skip_confirm=True)  # Skip confirmation for quick stop
+            return "break"  # Prevent event propagation

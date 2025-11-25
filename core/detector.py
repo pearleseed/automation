@@ -443,7 +443,7 @@ class OCRTextProcessor:
         "エース": NumberExtractor(position=-1),
         "非エース": NumberExtractor(position=-1),
         "獲得アイテム": ItemQuantityExtractor(),
-        "drop_range": DropRangeExtractor(),
+        "金の鍵穴コイン": DropRangeExtractor(),
     }
 
     # Cached extractor instances for internal use
@@ -749,141 +749,292 @@ class YOLODetector:
 # ==================== TEMPLATE MATCHER ====================
 
 
+@dataclass
+class TemplateInfo:
+    """Template metadata."""
+
+    image: np.ndarray
+    threshold: float = 0.85
+    category: str = ""  # "first_clear", "s_rank", "item"
+
+
 class TemplateMatcher:
-    """Template-based item detector."""
+    """Template-based item detector with confidence scoring and reward section detection.
+
+    Features:
+    - Per-template threshold configuration
+    - Confidence scoring for each detection
+    - Integrated OCR quantity extraction
+    - Reward section detection (first_clear, s_rank)
+
+    Template naming convention:
+    - first_*.png  → category="first_clear" (初回クリア報酬 label)
+    - srank_*.png  → category="s_rank" (Sランク報酬 label)
+    - item_*.png   → category="item" (reward items, will extract quantity)
+    """
+
+    # Category prefixes for template naming
+    CATEGORY_PREFIXES = {
+        "first_": "first_clear",
+        "srank_": "s_rank",
+        "item_": "item",
+    }
 
     def __init__(
         self,
         templates_dir: str = "templates",
         threshold: float = 0.85,
         method: str = "TM_CCOEFF_NORMED",
+        ocr_engine: Optional[Any] = None,
     ):
-        """Initialize template matcher."""
+        """Initialize template matcher.
+
+        Args:
+            templates_dir: Directory containing template images.
+            threshold: Default match threshold (0.0-1.0).
+            method: OpenCV matching method.
+            ocr_engine: OCR engine for quantity extraction (optional).
+        """
         self.templates_dir = templates_dir
         self.threshold = threshold
         self.method = method
-        self.templates = self._load_templates()
+        self.ocr_engine = ocr_engine
+        self.templates: Dict[str, TemplateInfo] = self._load_templates()
 
-        logger.info(f"TemplateMatcher initialized with {len(self.templates)} templates")
+        logger.info(f"TemplateMatcher: {len(self.templates)} templates loaded")
 
-    def _load_templates(self) -> Dict[str, np.ndarray]:
-        """Load template images from directory."""
+    def _load_templates(self) -> Dict[str, TemplateInfo]:
+        """Load templates with category detection from filename prefix."""
         if not os.path.isdir(self.templates_dir):
             logger.warning(f"Templates directory not found: {self.templates_dir}")
             return {}
 
         templates = {}
-        supported_formats = [".png", ".jpg", ".jpeg"]
 
         for filename in os.listdir(self.templates_dir):
             ext = os.path.splitext(filename)[1].lower()
-            if ext in supported_formats:
-                name = os.path.splitext(filename)[0]
-                img_path = os.path.join(self.templates_dir, filename)
+            if ext not in {".png", ".jpg", ".jpeg"}:
+                continue
 
-                try:
-                    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-                    if img is not None:
-                        templates[name] = img
-                        logger.debug(f"Loaded template: {name}")
-                except Exception as e:
-                    logger.error(f"Error loading template {filename}: {e}")
+            name = os.path.splitext(filename)[0]
+            img_path = os.path.join(self.templates_dir, filename)
+
+            try:
+                img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+                if img is None:
+                    continue
+
+                # Detect category from filename prefix
+                category = ""
+                name_lower = name.lower()
+                for prefix, cat in self.CATEGORY_PREFIXES.items():
+                    if name_lower.startswith(prefix):
+                        category = cat
+                        break
+
+                # Higher threshold for labels (more strict matching)
+                tpl_threshold = 0.9 if category in ("first_clear", "s_rank") else self.threshold
+
+                templates[name] = TemplateInfo(image=img, threshold=tpl_threshold, category=category)
+                logger.debug(f"Loaded: {name} (category={category})")
+
+            except Exception as e:
+                logger.error(f"Error loading {filename}: {e}")
 
         return templates
 
     def detect(
-        self, image: np.ndarray, threshold: Optional[float] = None
+        self,
+        image: np.ndarray,
+        threshold: Optional[float] = None,
+        template_names: Optional[List[str]] = None,
+        extract_quantity: bool = True,
     ) -> List[DetectionResult]:
-        """Detect items using template matching with OpenCV.
+        """Detect items using template matching.
 
         Args:
-            image: Input image as NumPy array (BGR format).
-            threshold: Match threshold 0.0-1.0 (default: uses instance threshold).
+            image: Input image (BGR format).
+            threshold: Override threshold (uses per-template if None).
+            template_names: Specific templates to match (None = all).
+            extract_quantity: Extract quantity via OCR for item templates.
 
         Returns:
-            List[DetectionResult]: List of detected items with bounding boxes and positions.
+            List[DetectionResult]: Detected items sorted by x-coordinate.
         """
-        if threshold is None:
-            threshold = self.threshold
-
         try:
-            image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         except Exception as e:
             logger.error(f"Grayscale conversion error: {e}")
             return []
 
-        found_items = []
+        found_items: List[DetectionResult] = []
+        templates_to_check = template_names or list(self.templates.keys())
+        method = getattr(cv2, self.method)
 
-        for template_name, template in self.templates.items():
-            matches = self._find_matches(image_gray, template, threshold)
+        for name in templates_to_check:
+            if name not in self.templates:
+                continue
 
-            for x, y in matches:
+            tpl_info = self.templates[name]
+            tpl_threshold = threshold if threshold is not None else tpl_info.threshold
+            template = tpl_info.image
+
+            # Skip if template larger than image
+            if template.shape[0] > gray.shape[0] or template.shape[1] > gray.shape[1]:
+                continue
+
+            try:
+                res = cv2.matchTemplate(gray, template, method)
+
+                # Normalize for SQDIFF methods
+                if method in (cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED):
+                    res = 1 - res
+
+                # Find all matches above threshold
+                locs = np.where(res >= tpl_threshold)
                 h, w = template.shape
-                # Use dataclass
-                found_items.append(
-                    DetectionResult(
-                        item=template_name, quantity=0, x=x, y=y, x2=x + w, y2=y + h
+
+                for pt in zip(*locs[::-1]):
+                    conf = float(res[pt[1], pt[0]])
+                    result = DetectionResult(
+                        item=name, quantity=0, x=pt[0], y=pt[1],
+                        x2=pt[0] + w, y2=pt[1] + h, confidence=conf,
                     )
-                )
 
-        # Duplicate removal
-        unique_items = self._remove_duplicates(found_items, min_distance=10)
-        logger.info(f"Template matching found {len(unique_items)} items")
-        return unique_items
+                    # Extract quantity for item templates
+                    if extract_quantity and self.ocr_engine and tpl_info.category == "item":
+                        result.quantity, result.ocr_text = self._extract_quantity(
+                            image, (pt[0], pt[1], pt[0] + w, pt[1] + h)
+                        )
 
-    def _find_matches(
-        self, image_gray: np.ndarray, template: np.ndarray, threshold: float
-    ) -> List[Tuple[int, int]]:
-        """Find template match positions."""
+                    found_items.append(result)
+
+            except Exception as e:
+                logger.debug(f"Match error for {name}: {e}")
+
+        # Remove duplicates with NMS and sort by x-coordinate
+        unique = self._nms_by_item(found_items, min_distance=15)
+        unique.sort(key=lambda d: d.x)
+
+        logger.info(f"Template matching: {len(unique)} items detected")
+        return unique
+
+    def _extract_quantity(self, image: np.ndarray, bbox: Tuple[int, int, int, int]) -> Tuple[int, str]:
+        """Extract quantity from region below item using OCR."""
+        x1, y1, x2, y2 = bbox
+        img_h, img_w = image.shape[:2]
+
+        # Quantity region: below the item
+        qty_y1, qty_y2 = min(y2 + 2, img_h - 1), min(y2 + 35, img_h)
+        qty_x1, qty_x2 = max(0, x1 - 5), min(x2 + 5, img_w)
+
+        if qty_y1 >= qty_y2 or qty_x1 >= qty_x2:
+            return 0, ""
+
+        roi = image[qty_y1:qty_y2, qty_x1:qty_x2]
+        if roi.size == 0:
+            return 0, ""
+
         try:
-            method = getattr(cv2, self.method)
-            res = cv2.matchTemplate(image_gray, template, method)
+            ocr_result = self.ocr_engine.recognize(roi)
+            text = ocr_result.get("text", "") if ocr_result else ""
+            numbers = TextProcessor.extract_numbers(text)
+            return (numbers[0] if numbers else 0), text
+        except Exception:
+            return 0, ""
 
-            if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
-                res = 1 - res
+    def detect_reward_section(self, image: np.ndarray, section_type: str = "first_clear") -> Dict[str, Any]:
+        """Detect reward section with label and items.
 
-            locs = np.where(res >= threshold)
-            matches = list(zip(*locs[::-1]))
+        Args:
+            image: Input image (BGR format).
+            section_type: "first_clear" (初回クリア報酬) or "s_rank" (Sランク報酬).
 
-            return matches
+        Returns:
+            Dict with 'label', 'items', and 'section_type'.
+        """
+        result = {"label": None, "items": [], "section_type": section_type}
 
-        except Exception as e:
-            logger.error(f"Template matching error: {e}")
-            return []
+        # Detect label
+        label_templates = [n for n, t in self.templates.items() if t.category == section_type]
+        if label_templates:
+            labels = self.detect(image, template_names=label_templates, extract_quantity=False)
+            if labels:
+                result["label"] = max(labels, key=lambda x: x.confidence)
+
+        # Detect items
+        item_templates = [n for n, t in self.templates.items() if t.category in ("item", "")]
+        if item_templates:
+            items = self.detect(image, template_names=item_templates, extract_quantity=True)
+            # Filter items to the right of label
+            if result["label"]:
+                items = [i for i in items if i.x > result["label"].x2]
+            result["items"] = items
+
+        logger.info(f"Reward '{section_type}': label={'✓' if result['label'] else '✗'}, items={len(result['items'])}")
+        return result
+
+    def detect_all_rewards(self, image: np.ndarray) -> Dict[str, Dict[str, Any]]:
+        """Detect both first_clear and s_rank reward sections in one pass.
+
+        Returns:
+            Dict with keys "first_clear" and "s_rank", each containing 'label' and 'items'.
+        """
+        # Detect all in one pass
+        all_detections = self.detect(image, extract_quantity=True)
+
+        # Separate labels and items
+        labels = {"first_clear": None, "s_rank": None}
+        items = []
+
+        for det in all_detections:
+            tpl_info = self.templates.get(det.item)
+            if tpl_info and tpl_info.category in labels:
+                if labels[tpl_info.category] is None or det.confidence > labels[tpl_info.category].confidence:
+                    labels[tpl_info.category] = det
+            else:
+                items.append(det)
+
+        # Assign items to sections by y-coordinate proximity
+        results = {}
+        y_tolerance = 50
+
+        for section_type in ("first_clear", "s_rank"):
+            label = labels.get(section_type)
+            section_items = []
+            if label:
+                section_items = [
+                    i for i in items
+                    if abs(i.center_y - label.center_y) < y_tolerance and i.x > label.x2
+                ]
+            results[section_type] = {"label": label, "items": section_items, "section_type": section_type}
+
+        logger.info(f"All rewards: first_clear={len(results['first_clear']['items'])}, s_rank={len(results['s_rank']['items'])}")
+        return results
 
     @staticmethod
-    def _remove_duplicates(
-        items: List[DetectionResult], min_distance: int
-    ) -> List[DetectionResult]:
-        """
-        Remove duplicate detections.
-        Groups by item name first, then uses spatial locality.
-        """
+    def _nms_by_item(items: List[DetectionResult], min_distance: int) -> List[DetectionResult]:
+        """Remove duplicate detections using NMS grouped by item name."""
         if not items:
             return []
 
-        # Group by item name first
+        # Group by item name
         by_item: Dict[str, List[DetectionResult]] = {}
         for item in items:
             by_item.setdefault(item.item, []).append(item)
 
-        unique_items: List[DetectionResult] = []
-        CHECK_WINDOW = 10  # Only check recent items
-        min_dist_sq = min_distance * min_distance  # Use squared distance to avoid sqrt
+        unique: List[DetectionResult] = []
+        min_dist_sq = min_distance * min_distance
 
         for item_list in by_item.values():
-            # Sort by position for spatial locality
-            sorted_items = sorted(item_list, key=lambda i: (i.x, i.y))
-
+            # Sort by confidence descending
+            sorted_items = sorted(item_list, key=lambda i: -i.confidence)
             for item in sorted_items:
-                # Check only against recent additions (use squared distance)
-                is_duplicate = any(
-                    existing.item == item.item
-                    and (existing.x - item.x) ** 2 + (existing.y - item.y) ** 2
-                    < min_dist_sq
-                    for existing in unique_items[-CHECK_WINDOW:]
+                is_dup = any(
+                    (e.x - item.x) ** 2 + (e.y - item.y) ** 2 < min_dist_sq
+                    for e in unique if e.item == item.item
                 )
-                if not is_duplicate:
-                    unique_items.append(item)
+                if not is_dup:
+                    unique.append(item)
 
-        return unique_items
+        return unique

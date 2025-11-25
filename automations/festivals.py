@@ -138,6 +138,7 @@ class FestivalAutomation(BaseAutomation):
             return TemplateMatcher(
                 templates_dir=template_config.get("templates_dir", self.templates_path),
                 threshold=template_config.get("threshold", 0.85),
+                ocr_engine=agent.ocr_engine,
             )
 
         return None
@@ -254,18 +255,23 @@ class FestivalAutomation(BaseAutomation):
                 roi_names = list(FESTIVALS_ROI_CONFIG.keys())
 
             results = {}
+
+            # Map ROI names to section types for reward detection
+            reward_roi_map = {
+                "初回クリア報酬": "first_clear",
+                "Sランク報酬": "s_rank",
+            }
+
             for roi_name in roi_names:
                 roi_image = self.crop_roi(screenshot, roi_name)
                 if roi_image is None:
                     results[roi_name] = {
-                        "roi_name": roi_name,
-                        "text": "",
-                        "detected": False,
-                        "detections": [],
-                        "detection_count": 0,
+                        "roi_name": roi_name, "text": "", "detected": False,
+                        "detections": [], "detection_count": 0,
                     }
                     continue
 
+                # OCR text
                 text = ""
                 if self.agent.ocr_engine is not None:
                     try:
@@ -275,7 +281,24 @@ class FestivalAutomation(BaseAutomation):
                     except Exception:
                         pass
 
-                if self.detector is not None:
+                # Use reward section detection for reward ROIs
+                if roi_name in reward_roi_map and self.detector and hasattr(self.detector, "detect_reward_section"):
+                    section_type = reward_roi_map[roi_name]
+                    reward_data = self.detector.detect_reward_section(roi_image, section_type=section_type)
+                    items = reward_data.get("items", [])
+                    results[roi_name] = {
+                        "roi_name": roi_name,
+                        "text": text,
+                        "detected": bool(items),
+                        "detections": items,
+                        "detection_count": len(items),
+                        "label": reward_data.get("label"),
+                        "items_with_quantity": [
+                            {"item": d.item, "quantity": d.quantity, "confidence": d.confidence}
+                            for d in items
+                        ],
+                    }
+                elif self.detector is not None:
                     detection_result = self.detect_roi(roi_name, roi_image=roi_image)
                     results[roi_name] = {
                         "roi_name": roi_name,
@@ -286,11 +309,8 @@ class FestivalAutomation(BaseAutomation):
                     }
                 else:
                     results[roi_name] = {
-                        "roi_name": roi_name,
-                        "text": text,
-                        "detected": False,
-                        "detections": [],
-                        "detection_count": 0,
+                        "roi_name": roi_name, "text": text, "detected": False,
+                        "detections": [], "detection_count": 0,
                     }
 
             logger.info(f"Scanned {len(results)} ROIs (OCR + detector)")
@@ -346,11 +366,15 @@ class FestivalAutomation(BaseAutomation):
             field_data = extracted_data[field]
             if isinstance(field_data, dict):
                 extracted_text = field_data.get("text", "").strip()
-                detected, detection_count = field_data.get(
-                    "detected", False
-                ), field_data.get("detection_count", 0)
+                detected = field_data.get("detected", False)
+                detection_count = field_data.get("detection_count", 0)
                 detections = field_data.get("detections", [])
-                quantity = detections[0].get("quantity", 0) if detections else 0
+                # Handle both DetectionResult dataclass and dict
+                if detections:
+                    first_det = detections[0]
+                    quantity = first_det.quantity if hasattr(first_det, "quantity") else first_det.get("quantity", 0)
+                else:
+                    quantity = 0
                 has_quantity = quantity > 0
             else:
                 extracted_text = str(field_data).strip()

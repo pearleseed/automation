@@ -23,8 +23,10 @@ import glob
 import os
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+import cv2
+import numpy as np
 from airtest.core.api import Template, exists, sleep
 
 from core.agent import Agent
@@ -34,6 +36,35 @@ from core.data import ResultWriter
 from core.utils import StructuredLogger, ensure_directory, get_logger
 
 logger = get_logger(__name__)
+
+
+def match_template_in_image(
+    image: np.ndarray, template: np.ndarray, threshold: float = 0.8
+) -> Tuple[bool, float]:
+    """Match template in image using cv2.matchTemplate.
+
+    Args:
+        image: Source image (BGR or grayscale).
+        template: Template image (BGR or grayscale).
+        threshold: Match threshold (0.0-1.0).
+
+    Returns:
+        Tuple of (found, confidence).
+    """
+    # Convert to grayscale if needed
+    if len(image.shape) == 3:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    if len(template.shape) == 3:
+        template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+
+    # Check template size
+    if template.shape[0] > image.shape[0] or template.shape[1] > image.shape[1]:
+        return False, 0.0
+
+    result = cv2.matchTemplate(image, template, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, _ = cv2.minMaxLoc(result)
+
+    return max_val >= threshold, max_val
 
 
 class GachaAutomation(BaseAutomation):
@@ -77,9 +108,6 @@ class GachaAutomation(BaseAutomation):
         Returns:
             bool: True if banner found in ROI, False otherwise
         """
-        import cv2
-        import numpy as np
-
         if not os.path.exists(banner_path):
             logger.error(f"Banner template not found: {banner_path}")
             return False
@@ -93,20 +121,12 @@ class GachaAutomation(BaseAutomation):
 
         # Check current screen
         screenshot = self.get_screenshot()
-        if screenshot:
+        if screenshot is not None:
             roi_image = self.crop_roi(screenshot, roi_name)
             if roi_image is not None:
-                roi_array = (
-                    np.array(roi_image)
-                    if not isinstance(roi_image, np.ndarray)
-                    else roi_image
-                )
-                result = cv2.matchTemplate(
-                    roi_array, banner_template, cv2.TM_CCOEFF_NORMED
-                )
-                _, max_val, _, _ = cv2.minMaxLoc(result)
-                if max_val >= threshold:
-                    logger.info(f"Banner found in ROI (confidence: {max_val:.2f})")
+                found, confidence = match_template_in_image(roi_image, banner_template, threshold)
+                if found:
+                    logger.info(f"Banner found in ROI (confidence: {confidence:.2f})")
                     return True
 
         # Scroll and search
@@ -117,30 +137,19 @@ class GachaAutomation(BaseAutomation):
             sleep(0.5)
 
             screenshot = self.get_screenshot()
-            if not screenshot:
+            if screenshot is None:
                 continue
 
             roi_image = self.crop_roi(screenshot, roi_name)
             if roi_image is None:
                 continue
 
-            roi_array = (
-                np.array(roi_image)
-                if not isinstance(roi_image, np.ndarray)
-                else roi_image
-            )
-            result = cv2.matchTemplate(roi_array, banner_template, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, _ = cv2.minMaxLoc(result)
-
-            if max_val >= threshold:
-                logger.info(
-                    f"Banner found after {attempt} scroll(s) (confidence: {max_val:.2f})"
-                )
+            found, confidence = match_template_in_image(roi_image, banner_template, threshold)
+            if found:
+                logger.info(f"Banner found after {attempt} scroll(s) (confidence: {confidence:.2f})")
                 return True
 
-        logger.error(
-            f"Banner not found in ROI after {self.max_scroll_attempts} scrolls"
-        )
+        logger.error(f"Banner not found in ROI after {self.max_scroll_attempts} scrolls")
         return False
 
     def check_result(
