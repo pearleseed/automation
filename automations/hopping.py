@@ -1,27 +1,20 @@
 """
-Hopping Automation
+Pool Hopping Automation
 
-Standard flow for world hopping with OCR-based verification:
+Standard flow for pool hopping with OCR-based verification:
 
-1. Check current world -> snapshot & OCR world name
-2. Touch world map button (tpl_world_map.png)
-3. Touch hop button (tpl_hop_button.png)
-4. Confirm hop (tpl_confirm_hop.png)
-5. Wait for loading transition (configurable duration)
-6. Check new world -> snapshot & OCR world name
-7. Verify hop success - Compare world names (before vs after)
-
-OCR verification:
-- World names extracted from ROI using OCR
-- Text normalized using TextProcessor for accurate comparison
-- Enhanced comparison detects OCR variations (>90% similarity = same world)
-- Hop success confirmed when world names differ significantly
+1. Snapshot before -> save (course_X/01_before.png)
+2. Touch use button in ROI (tpl_use.png)
+3. Touch OK button (tpl_ok.png)
+4. Snapshot item -> save (course_X/02_item.png)
+5. Verification - ROI scan -> compare CSV -> record OK/NG
 """
 
+import json
 import os
 import time
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from airtest.core.api import sleep
 
@@ -29,17 +22,22 @@ from core.agent import Agent
 from core.base import BaseAutomation, CancellationError, ExecutionStep, StepResult
 from core.config import HOPPING_ROI_CONFIG, get_hopping_config, merge_config
 from core.data import ResultWriter, load_data
-from core.detector import TextProcessor
+from core.detector import (
+    YOLO_AVAILABLE,
+    OCRTextProcessor,
+    TemplateMatcher,
+    YOLODetector,
+)
 from core.utils import StructuredLogger, ensure_directory, get_logger
 
 logger = get_logger(__name__)
 
 
 class HoppingAutomation(BaseAutomation):
-    """Automate World Hopping with OCR verification.
+    """Automate Pool Hopping with OCR verification.
 
-    This class automates world hopping by navigating menus, confirming hops,
-    and verifying successful world transitions through OCR text comparison.
+    This class automates pool hopping by navigating courses, using items,
+    and verifying results through OCR text comparison with CSV data.
     """
 
     def __init__(
@@ -50,11 +48,6 @@ class HoppingAutomation(BaseAutomation):
         super().__init__(agent, cfg, HOPPING_ROI_CONFIG, cancel_event=cancel_event)
 
         self.config = cfg
-        self.loading_wait = cfg["loading_wait"]
-        self.cooldown_wait = cfg["cooldown_wait"]
-        self.max_hops = cfg["max_hops"]
-        self.retry_on_fail = cfg["retry_on_fail"]
-        self.max_retries = cfg["max_retries"]
 
         log_dir = os.path.join(self.results_dir, "logs")
         ensure_directory(log_dir)
@@ -64,149 +57,281 @@ class HoppingAutomation(BaseAutomation):
             name="HoppingAutomation", log_file=log_file
         )
 
+        # Detector support (like festival)
+        self.detector = None
+        self.use_detector = cfg.get("use_detector", False)
+        if self.use_detector:
+            self.detector = self._create_detector(cfg, agent)
+
+        # Fuzzy matching config
+        fuzzy_config = cfg.get("fuzzy_matching", {})
+        self.use_fuzzy_matching = fuzzy_config.get("enabled", True)
+        self.fuzzy_threshold = fuzzy_config.get("threshold", 0.7)
+
+        # Resume state file
+        self.resume_state_file = os.path.join(self.results_dir, ".hopping_resume.json")
+
         logger.info("HoppingAutomation initialized")
-        self.structured_logger.info(f"Log: {log_file}")
+        self.structured_logger.info(
+            f"Log: {log_file} | Fuzzy: {self.use_fuzzy_matching} (threshold: {self.fuzzy_threshold})"
+        )
 
-    def process_world_name(self, raw_world_name: str) -> Dict[str, Any]:
-        """Process world name with OCR text cleaning using TextProcessor."""
-        result = {
-            "world_name": "Unknown",
-            "normalized_name": "",
-            "raw_name": raw_world_name,
-            "confidence": 0.0,
-        }
+    def _create_detector(self, cfg: Dict[str, Any], agent: Agent) -> Optional[Any]:
+        """Factory method for creating detectors (YOLO or Template Matching)."""
+        detector_type = cfg.get("detector_type", "template")
 
+        if detector_type == "auto":
+            if YOLO_AVAILABLE:
+                try:
+                    yolo_config = cfg.get("yolo_config", {})
+                    logger.info("Using YOLO Detector")
+                    return YOLODetector(
+                        agent=agent,
+                        model_path=yolo_config.get("model_path", "yolo11n.pt"),
+                        confidence=yolo_config.get("confidence", 0.25),
+                        device=yolo_config.get("device", "cpu"),
+                    )
+                except Exception as e:
+                    logger.warning(f"YOLO init failed: {e}, fallback to Template")
+            detector_type = "template"
+
+        if detector_type == "yolo":
+            try:
+                yolo_config = cfg.get("yolo_config", {})
+                logger.info("Using YOLO Detector")
+                return YOLODetector(
+                    agent=agent,
+                    model_path=yolo_config.get("model_path", "yolo11n.pt"),
+                    confidence=yolo_config.get("confidence", 0.25),
+                    device=yolo_config.get("device", "cpu"),
+                )
+            except Exception as e:
+                logger.error(f"YOLO init failed: {e}")
+                return None
+
+        if detector_type == "template":
+            template_config = cfg.get("template_config", {})
+            logger.info("Using Template Matcher")
+            return TemplateMatcher(
+                templates_dir=template_config.get("templates_dir", self.templates_path),
+                threshold=template_config.get("threshold", 0.85),
+                ocr_engine=agent.ocr_engine,
+            )
+
+        return None
+
+    def _manage_resume_state(self, action: str, **kwargs) -> Optional[Dict[str, Any]]:
+        """Manage resume state: load, save, complete, or clear.
+
+        Uses atomic write (temp file + rename) to prevent corruption.
+        """
         try:
-            if raw_world_name:
-                # Clean OCR artifacts using TextProcessor
-                cleaned = TextProcessor.clean_ocr_artifacts(raw_world_name.strip())
-                # Remove extra spaces
-                cleaned = " ".join(cleaned.split())
+            if action == "load":
+                if not os.path.exists(self.resume_state_file):
+                    return None
+                with open(self.resume_state_file, "r", encoding="utf-8-sig") as f:
+                    state = json.load(f)
+                if state.get("status") == "in_progress":
+                    logger.info(
+                        f"✓ Resume: course {state.get('current_course')}/{state.get('total_courses')}"
+                    )
+                    return state
+                return None
 
-                # Normalize for comparison using TextProcessor
-                normalized = TextProcessor.normalize_text(
-                    cleaned, remove_spaces=True, lowercase=True
-                )
-
-                result["world_name"] = cleaned
-                result["normalized_name"] = normalized
-                result["confidence"] = 0.9 if cleaned and len(cleaned) > 2 else 0.5
-
+            elif action == "save":
+                state = {
+                    "data_path": kwargs["data_path"],
+                    "output_path": kwargs["output_path"],
+                    "use_detector": kwargs["use_detector"],
+                    "start_course_index": kwargs.get("start_course_index", 1),
+                    "current_course": kwargs["current_course"],
+                    "total_courses": kwargs["total_courses"],
+                    "timestamp": datetime.now().isoformat(),
+                    "status": "in_progress",
+                }
+                self._atomic_write_json(self.resume_state_file, state)
                 logger.debug(
-                    f"Processed world name: '{cleaned}' (normalized: '{normalized}')"
+                    f"Resume saved: {kwargs['current_course']}/{kwargs['total_courses']}"
                 )
+
+            elif action == "complete":
+                if os.path.exists(self.resume_state_file):
+                    with open(self.resume_state_file, "r", encoding="utf-8-sig") as f:
+                        state = json.load(f)
+                    state["status"] = "completed"
+                    state["completed_at"] = datetime.now().isoformat()
+                    self._atomic_write_json(self.resume_state_file, state)
+                    logger.debug("Resume completed")
+
+            elif action == "clear":
+                if os.path.exists(self.resume_state_file):
+                    os.remove(self.resume_state_file)
+                    logger.debug("Resume cleared")
+
+            return None
 
         except Exception as e:
-            logger.error(f"Error processing world name: {e}")
+            logger.warning(f"Resume state {action} failed: {e}")
+            return None
 
-        return result
+    def _atomic_write_json(self, file_path: str, data: Dict[str, Any]) -> bool:
+        """Write JSON file atomically using temp file and rename.
 
-    def verify_hop_success(
-        self, before_world: str, after_world: str, use_enhanced_comparison: bool = True
-    ) -> bool:
-        """Check if hop was successful (world changed)."""
-        if not before_world or not after_world:
+        Args:
+            file_path: Target file path.
+            data: Dictionary to write as JSON.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        import tempfile
+
+        directory = os.path.dirname(file_path) or "."
+        ensure_directory(directory)
+
+        fd, temp_path = tempfile.mkstemp(dir=directory, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8-sig") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            os.replace(temp_path, file_path)
+            return True
+        except Exception as e:
+            logger.error(f"Atomic write failed: {e}")
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
             return False
 
-        if use_enhanced_comparison:
-            # Use OCRTextProcessor for better comparison
-            # Process both world names
-            before_processed = self.process_world_name(before_world)
-            after_processed = self.process_world_name(after_world)
+    def compare_results(
+        self,
+        extracted_data: Dict[str, Any],
+        expected_data: Dict[str, Any],
+        return_details: bool = True,
+        roi_names: Optional[List[str]] = None,
+    ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+        """Compare extracted ROI data with expected values from CSV."""
+        if not expected_data:
+            return True, "No expected data", {} if return_details else None
 
-            # Compare normalized names
-            before_norm = before_processed["normalized_name"]
-            after_norm = after_processed["normalized_name"]
-
-            # Worlds are different if normalized names don't match
-            worlds_differ = before_norm != after_norm
-
-            # Additional check: names should be sufficiently different
-            # (not just minor OCR variations)
-            if worlds_differ and before_norm and after_norm:
-                # Calculate similarity to detect OCR variations
-                similarity = sum(
-                    1 for a, b in zip(before_norm, after_norm) if a == b
-                ) / max(len(before_norm), len(after_norm))
-
-                # If similarity is very high (>90%), might be same world with OCR noise
-                if similarity > 0.9:
-                    logger.warning(
-                        f"World names very similar ({similarity:.2%}), might be OCR variation: "
-                        f"'{before_world}' vs '{after_world}'"
-                    )
-                    worlds_differ = False
-
-            logger.debug(
-                f"Hop verification: '{before_world}' -> '{after_world}' = {worlds_differ}"
-            )
-            return worlds_differ
-        else:
-            # Legacy comparison (simple lowercase comparison)
-            return before_world.strip().lower() != after_world.strip().lower()
-
-    def run_hopping_stage(
-        self, hop_data: Dict[str, Any], hop_idx: int
-    ) -> Dict[str, Any]:
-        """Run hopping stage."""
-        folder_name = f"hopping_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        result = {
-            "hop_idx": hop_idx,
-            "world_before": "Unknown",
-            "world_after": "Unknown",
-            "success": False,
+        roi_fields = set(roi_names) if roi_names else set(extracted_data.keys())
+        comparable_fields = {
+            k: v for k, v in expected_data.items() if k in roi_fields and v
         }
+        if not comparable_fields:
+            return True, "No comparable fields", {} if return_details else None
 
-        max_retries = self.config.get("max_step_retries", 3)
+        matches, mismatches, detailed_results = 0, [], {}
+
+        for field, expected_value in comparable_fields.items():
+            if field not in extracted_data:
+                mismatches.append(f"{field}:missing")
+                if return_details:
+                    detailed_results[field] = {
+                        "status": "missing",
+                        "expected": expected_value,
+                    }
+                continue
+
+            field_data = extracted_data[field]
+            if isinstance(field_data, dict):
+                extracted_text = field_data.get("text", "").strip()
+            else:
+                extracted_text = str(field_data).strip()
+
+            validation_result = OCRTextProcessor.validate_field(
+                field, extracted_text, expected_value
+            )
+            text_match = validation_result.status == "match"
+
+            if return_details:
+                detailed_results[field] = {
+                    "status": validation_result.status,
+                    "extracted_text": extracted_text,
+                    "extracted_value": validation_result.extracted,
+                    "expected": validation_result.expected,
+                    "message": validation_result.message,
+                    "confidence": validation_result.confidence,
+                }
+
+            if text_match:
+                matches += 1
+            else:
+                mismatches.append(
+                    f"{field}:{validation_result.extracted}≠{validation_result.expected}"
+                )
+
+        total = len(comparable_fields)
+        is_ok = matches == total
+        message = (
+            f"✓ {matches}/{total} matched"
+            if is_ok
+            else f"✗ {matches}/{total} matched ({', '.join(mismatches[:3])})"
+        )
+        return is_ok, message, detailed_results if return_details else None
+
+    def run_hopping_course(
+        self, course_data: Dict[str, Any], course_idx: int, use_detector: bool = False
+    ) -> Dict[str, Any]:
+        """Run automation for a single pool hopping course with verification.
+
+        Flow:
+        1. Snapshot before
+        2. Touch tpl_use in ROI
+        3. Touch tpl_ok
+        4. Snapshot item
+        5. Verification - ROI scan -> compare CSV -> record OK/NG
+
+        Args:
+            course_data: Dictionary containing course information from CSV.
+            course_idx: Course index number for logging and tracking.
+            use_detector: Enable YOLO/Template detector for item verification.
+
+        Returns:
+            Dict with success status and verification details.
+        """
+        course_name = course_data.get("コース名", f"Course_{course_idx}")
+        folder_name = f"course_{course_idx}"
+
+        max_retries = self.config.get("max_step_retries", 5)
         retry_delay = self.config.get("retry_delay", 1.0)
 
         start_time = time.time()
-        self.structured_logger.stage_start(
-            hop_idx, "WORLD HOP", f"Loading wait: {self.loading_wait}s"
-        )
+        course_info = f"Course: {course_name}"
+        self.structured_logger.stage_start(course_idx, course_name, course_info)
 
         screenshot_before = None
-        screenshot_after = None
+        screenshot_item = None
+        is_ok = False
+        verification_details = {}
 
         try:
-            # Step 1: Check current world (before hop)
-            def capture_before():
+            # ==================== STEP 1: SNAPSHOT BEFORE ====================
+
+            def _capture_before():
                 nonlocal screenshot_before
-                screenshot_before = self.snapshot_and_save(
-                    folder_name, f"{hop_idx:02d}_before.png"
-                )
-                if screenshot_before is not None:
-                    world_info_before = self.scan_screen_roi(
-                        screenshot_before, ["world_name"]
-                    )
-                    raw_world_before = world_info_before.get("world_name", "Unknown")
-                    processed_before = self.process_world_name(raw_world_before)
-                    result["world_before"] = processed_before["world_name"]
-                    result["world_before_confidence"] = processed_before["confidence"]
-                    self.structured_logger.info(
-                        f"Current world: {result['world_before']} (conf: {result['world_before_confidence']:.2f})"
-                    )
+                screenshot_before = self.snapshot_and_save(folder_name, "01_before.png")
                 return screenshot_before is not None
 
             step1 = ExecutionStep(
                 step_num=1,
-                name="Check Current World",
-                action=capture_before,
+                name="Snapshot Before",
+                action=_capture_before,
                 max_retries=max_retries,
                 retry_delay=retry_delay,
-                post_delay=0,
+                post_delay=0.5,
                 cancel_checker=self.check_cancelled,
                 logger=self.structured_logger,
             )
             if step1.execute() != StepResult.SUCCESS:
-                result["success"] = False
-                return result
+                return {"success": False, "verification_details": {}}
 
-            # Step 2: Touch World Map
+            # ==================== STEP 2: TOUCH USE BUTTON IN ROI ====================
+
             step2 = ExecutionStep(
                 step_num=2,
-                name="Touch World Map",
-                action=lambda: self.touch_template("tpl_world_map.png"),
+                name="Touch Use Button",
+                action=lambda: self.touch_template("tpl_use.png"),
                 max_retries=max_retries,
                 retry_delay=retry_delay,
                 post_delay=0.5,
@@ -214,29 +339,34 @@ class HoppingAutomation(BaseAutomation):
                 logger=self.structured_logger,
             )
             if step2.execute() != StepResult.SUCCESS:
-                result["success"] = False
-                return result
+                return {"success": False, "verification_details": {}}
 
-            # Step 3: Touch Hop Button
+            # ==================== STEP 3: TOUCH OK BUTTON ====================
+
             step3 = ExecutionStep(
                 step_num=3,
-                name="Touch Hop Button",
-                action=lambda: self.touch_template("tpl_hop_button.png"),
+                name="Touch OK Button",
+                action=lambda: self.touch_template("tpl_ok.png"),
                 max_retries=max_retries,
                 retry_delay=retry_delay,
-                post_delay=0.5,
+                post_delay=1.0,
                 cancel_checker=self.check_cancelled,
                 logger=self.structured_logger,
             )
             if step3.execute() != StepResult.SUCCESS:
-                result["success"] = False
-                return result
+                return {"success": False, "verification_details": {}}
 
-            # Step 4: Confirm hop
+            # ==================== STEP 4: SNAPSHOT ITEM ====================
+
+            def _capture_item():
+                nonlocal screenshot_item
+                screenshot_item = self.snapshot_and_save(folder_name, "02_item.png")
+                return screenshot_item is not None
+
             step4 = ExecutionStep(
                 step_num=4,
-                name="Confirm Hop",
-                action=lambda: self.touch_template("tpl_confirm_hop.png"),
+                name="Snapshot Item",
+                action=_capture_item,
                 max_retries=max_retries,
                 retry_delay=retry_delay,
                 post_delay=0,
@@ -244,324 +374,315 @@ class HoppingAutomation(BaseAutomation):
                 logger=self.structured_logger,
             )
             if step4.execute() != StepResult.SUCCESS:
-                result["success"] = False
-                return result
+                return {"success": False, "verification_details": {}}
 
-            # Step 5: Wait for loading
-            self.structured_logger.subsection_header("LOADING")
-            self.structured_logger.info(
-                f"Waiting {self.loading_wait}s for world transition..."
-            )
-            sleep(self.loading_wait)
+            # ==================== STEP 5: VERIFICATION ====================
 
-            # Step 6: Check new world (after hop)
             self.structured_logger.subsection_header("VERIFICATION")
+            verification_rois = self.config.get(
+                "verification_rois",
+                ["アイテム名", "獲得数"],
+            )
 
-            def capture_after():
-                nonlocal screenshot_after
-                screenshot_after = self.snapshot_and_save(
-                    folder_name, f"{hop_idx:02d}_after.png"
+            def _verify():
+                nonlocal is_ok, screenshot_item, verification_details
+                self.check_cancelled("Verification")
+
+                # Scan ROIs from item screenshot
+                extracted = self.scan_screen_roi(screenshot_item, verification_rois)
+
+                # Compare with expected data from CSV
+                is_ok, msg, verification_details = self.compare_results(
+                    extracted,
+                    course_data,
+                    return_details=True,
+                    roi_names=verification_rois,
                 )
-                if screenshot_after is not None:
-                    world_info_after = self.scan_screen_roi(
-                        screenshot_after, ["world_name"]
-                    )
-                    raw_world_after = world_info_after.get("world_name", "Unknown")
-                    processed_after = self.process_world_name(raw_world_after)
-                    result["world_after"] = processed_after["world_name"]
-                    result["world_after_confidence"] = processed_after["confidence"]
-                    self.structured_logger.info(
-                        f"New world: {result['world_after']} (conf: {result['world_after_confidence']:.2f})"
-                    )
-                return screenshot_after is not None
+                self.structured_logger.info(f"Verification: {msg}")
 
-            step6 = ExecutionStep(
-                step_num=6,
-                name="Check New World",
-                action=capture_after,
-                max_retries=max_retries,
-                retry_delay=retry_delay,
+                # Log detailed results
+                if verification_details:
+                    for field, details in verification_details.items():
+                        status = details.get("status", "unknown")
+                        result_mark = "✓" if status == "match" else "✗"
+                        self.structured_logger.info(
+                            f"  {result_mark} {field}: {status.upper()} "
+                            f"(expected: {details.get('expected', 'N/A')}, "
+                            f"extracted: {details.get('extracted_value', 'N/A')})"
+                        )
+                return True
+
+            step5 = ExecutionStep(
+                step_num=5,
+                name="Verification",
+                action=_verify,
+                max_retries=1,
+                retry_delay=0,
                 post_delay=0,
                 cancel_checker=self.check_cancelled,
                 logger=self.structured_logger,
             )
-            if step6.execute() != StepResult.SUCCESS:
-                result["success"] = False
-                return result
+            step5.execute()
 
-            # Step 7: Verify hop success
-            def verify_hop():
-                self.check_cancelled("Hop verification")
-                success = self.verify_hop_success(
-                    result["world_before"],
-                    result["world_after"],
-                    use_enhanced_comparison=True,
-                )
-                result["success"] = success
-
-                if success:
-                    self.structured_logger.info(
-                        f"✓ Hop successful: {result['world_before']} → {result['world_after']}"
-                    )
-                else:
-                    self.structured_logger.warning(
-                        f"✗ Hop failed: {result['world_before']} → {result['world_after']}"
-                    )
-
-                return success
-
-            step7 = ExecutionStep(
-                step_num=7,
-                name="Verify Hop Success",
-                action=verify_hop,
-                max_retries=max_retries,
-                retry_delay=retry_delay,
-                post_delay=0,
-                cancel_checker=self.check_cancelled,
-                logger=self.structured_logger,
-            )
-            if step7.execute() != StepResult.SUCCESS:
-                result["success"] = False
-                return result
+            # ==================== FINAL RESULT ====================
 
             duration = time.time() - start_time
-            self.structured_logger.stage_end(hop_idx, bool(result["success"]), duration)
-            return result
+            self.structured_logger.stage_end(course_idx, is_ok, duration)
+
+            return {
+                "success": is_ok,
+                "verification_details": verification_details,
+            }
 
         except CancellationError:
-            self.structured_logger.warning(f"Hop {hop_idx} cancelled by user")
-            result["success"] = False
-            return result
+            self.structured_logger.warning(f"Course {course_idx} cancelled by user")
+            return {"success": False, "verification_details": {}}
         except Exception as e:
-            self.structured_logger.error(f"Hop {hop_idx} failed with exception: {e}")
+            self.structured_logger.error(
+                f"Course {course_idx} failed with exception: {e}"
+            )
             import traceback
 
             self.structured_logger.error(traceback.format_exc())
-            result["success"] = False
-            return result
+            return {"success": False, "verification_details": {}}
 
-    def run_all_hops(
+    def run_all_courses(
         self,
-        data_path: Optional[str] = None,
-        num_hops: Optional[int] = None,
+        data_path: str,
         output_path: Optional[str] = None,
+        use_detector: bool = False,
+        resume: bool = True,
+        force_new_session: bool = False,
+        start_course_index: int = 1,
     ) -> bool:
-        """
-        Run all hops.
+        """Run automation for all courses with incremental saving and resume support.
 
         Args:
-            data_path: Path to CSV/JSON file with test data (mode 1)
-            num_hops: Number of hops to run (mode 2, if no data_path)
-            output_path: Output result path (None = auto-generate)
+            data_path: Path to CSV/JSON file with course data.
+            output_path: Output result path (None = auto-generate).
+            use_detector: Use detector (YOLO/Template).
+            resume: Resume from existing results if available.
+            force_new_session: Force start new session.
+            start_course_index: Index of course to start from (1-based).
 
         Returns:
-            bool: True if successful
+            bool: True if successful.
         """
         result_writer = None
         start_time = time.time()
 
         try:
-            # Mode 1: Load from data file
-            if data_path:
-                test_data = load_data(data_path)
-                if not test_data:
+            # Load data
+            courses_data = load_data(data_path)
+            if not courses_data:
+                self.structured_logger.error(f"Failed to load data from {data_path}")
+                return False
+
+            # Apply start course index filter
+            original_count = len(courses_data)
+            if start_course_index > 1:
+                if start_course_index > original_count:
                     self.structured_logger.error(
-                        f"Failed to load data from {data_path}"
+                        f"Start course {start_course_index} exceeds total ({original_count})"
                     )
                     return False
 
-                # Setup output
-                if output_path is None:
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    output_path = f"{self.results_dir}/hopping_batch_{timestamp}.csv"
-
-                result_writer = ResultWriter(
-                    output_path,
-                    formats=["csv", "json", "html"],
-                    auto_write=True,
-                    resume=True,
+                courses_data = courses_data[start_course_index - 1 :]
+                self.structured_logger.info(
+                    f"✓ Starting from course {start_course_index}/{original_count} | "
+                    f"Remaining: {len(courses_data)}"
                 )
 
-                config_info = {
-                    "Mode": "Batch (Data File)",
-                    "Total Sessions": len(test_data),
-                    "Output Path": output_path,
-                    "Data Source": data_path,
-                }
-                self.structured_logger.automation_start(
-                    "HOPPING AUTOMATION", config_info
+            # Check for existing resume state
+            resume_state = None
+            if resume and not force_new_session:
+                resume_state = self._manage_resume_state("load")
+
+                if resume_state:
+                    if (
+                        resume_state.get("data_path") != data_path
+                        or resume_state.get("use_detector") != use_detector
+                        or resume_state.get("start_course_index", 1)
+                        != start_course_index
+                    ):
+                        logger.warning("Resume mismatch, starting new session")
+                        self._manage_resume_state("clear")
+                        resume_state = None
+                    else:
+                        output_path = resume_state.get("output_path")
+                        logger.info(f"✓ Resuming: {output_path}")
+                        self.structured_logger.info(
+                            f"RESUMING from course {resume_state.get('current_course', 1)}"
+                        )
+
+            # Setup output path
+            if output_path is None:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                detector_suffix = "_detector" if use_detector else ""
+                output_path = f"{self.results_dir}/hopping_results_{timestamp}{detector_suffix}.csv"
+
+            # Initialize ResultWriter
+            result_writer = ResultWriter(
+                output_path,
+                formats=["csv", "json", "html"],
+                auto_write=True,
+                resume=resume,
+            )
+
+            # Log automation start
+            mode = "Detector + OCR" if use_detector and self.detector else "OCR only"
+            config_info = {
+                "Mode": mode,
+                "Total Courses": len(courses_data),
+                "Start Course": (
+                    f"{start_course_index}" if start_course_index > 1 else "1"
+                ),
+                "Output Path": output_path,
+                "Data Source": data_path,
+                "Resume": resume,
+            }
+
+            if resume and result_writer.completed_test_ids:
+                config_info["Completed"] = len(result_writer.completed_test_ids)
+
+            self.structured_logger.automation_start(
+                "POOL HOPPING AUTOMATION", config_info
+            )
+
+            # Process each course
+            success_count = 0
+            failed_count = 0
+            skipped_count = 0
+
+            for idx, course_data in enumerate(courses_data, start_course_index):
+                # Save resume state
+                self._manage_resume_state(
+                    "save",
+                    data_path=data_path,
+                    output_path=output_path,
+                    use_detector=use_detector,
+                    start_course_index=start_course_index,
+                    current_course=idx,
+                    total_courses=len(courses_data) + start_course_index - 1,
                 )
 
-                all_success = True
-
-                # Process each session from data
-                for idx, session_data in enumerate(test_data, 1):
-                    session_id = session_data.get("session_id", idx)
-                    session_num_hops = int(session_data.get("num_hops", 1))
-
-                    # Override timing configs if provided
-                    if "loading_wait" in session_data:
-                        self.loading_wait = float(session_data["loading_wait"])
-                    if "cooldown_wait" in session_data:
-                        self.cooldown_wait = float(session_data["cooldown_wait"])
-
-                    self.structured_logger.section_header(
-                        f"SESSION {idx}/{len(test_data)}: {session_num_hops} hops"
+                try:
+                    self.check_cancelled(f"course {idx}")
+                except CancellationError:
+                    self.structured_logger.warning(
+                        f"Cancellation requested, stopping at course {idx}"
                     )
+                    result_writer.flush()
+                    result_writer.print_summary()
 
-                    # Run hops for this session
-                    session_start = datetime.now()
-                    successful_hops = 0
-
-                    for hop_idx in range(1, session_num_hops + 1):
-                        try:
-                            self.check_cancelled(f"hop {hop_idx}")
-                        except CancellationError:
-                            logger.info(
-                                f"Cancellation requested, stopping at hop {hop_idx}"
-                            )
-                            break
-                        hop_result = self.run_hopping_stage({}, hop_idx)
-                        if hop_result["success"]:
-                            successful_hops += 1
-                        sleep(0.5)
-
-                    session_end = datetime.now()
-                    session_duration = (session_end - session_start).total_seconds()
-                    session_success = successful_hops == session_num_hops
-
-                    if not session_success:
-                        all_success = False
-
-                    # Add session summary
-                    result_writer.add_result(
-                        test_case={
-                            "session_id": session_id,
-                            "num_hops": session_num_hops,
-                            "successful_hops": successful_hops,
-                            "failed_hops": session_num_hops - successful_hops,
-                            "success_rate": f"{(successful_hops/session_num_hops*100):.1f}%",
-                            "duration_seconds": f"{session_duration:.1f}",
-                        },
-                        result=(
-                            ResultWriter.RESULT_OK
-                            if session_success
-                            else ResultWriter.RESULT_NG
-                        ),
-                        error_message=(
-                            None
-                            if session_success
-                            else f"Only {successful_hops}/{session_num_hops} hops succeeded"
-                        ),
-                    )
-
-                    self.structured_logger.info(
-                        f"Session {idx} completed: {successful_hops}/{session_num_hops} successful"
-                    )
-                    sleep(2.0)
-
-                # Save results
-                result_writer.flush()
-                result_writer.print_summary()
-
-                # Log completion
-                duration = time.time() - start_time
-                summary = {
-                    "Total Sessions": len(test_data),
-                    "Success": "All" if all_success else "Partial",
-                    "Duration": f"{duration:.2f}s",
-                    "Results File": output_path,
-                }
-                self.structured_logger.automation_end(
-                    "HOPPING AUTOMATION", all_success, summary
-                )
-
-                return all_success
-
-            # Mode 2: Direct num_hops
-            elif num_hops:
-                # Setup output
-                if output_path is None:
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    output_path = f"{self.results_dir}/hopping_results_{timestamp}.csv"
-
-                result_writer = ResultWriter(
-                    output_path,
-                    formats=["csv", "json", "html"],
-                    auto_write=True,
-                    resume=True,
-                )
-
-                config_info = {
-                    "Mode": "Direct",
-                    "Total Hops": num_hops,
-                    "Output Path": output_path,
-                }
-                self.structured_logger.automation_start(
-                    "HOPPING AUTOMATION", config_info
-                )
-
-                successful_hops = 0
-
-                # Process each hop
-                for idx in range(1, num_hops + 1):
-                    try:
-                        self.check_cancelled(f"hop {idx}")
-                    except CancellationError:
-                        logger.info(f"Cancellation requested, stopping at hop {idx}")
-                        break
-                    hop_result = self.run_hopping_stage({}, idx)
-
-                    if hop_result["success"]:
-                        successful_hops += 1
-
-                    # Add to result writer
-                    test_case = {
-                        "hop_number": idx,
-                        "world_before": hop_result.get("world_before", ""),
-                        "world_after": hop_result.get("world_after", ""),
-                        "success": hop_result.get("success", False),
+                    duration = time.time() - start_time
+                    summary = {
+                        "Total Processed": idx - 1,
+                        "Success": success_count,
+                        "Failed": failed_count,
+                        "Skipped": skipped_count,
+                        "Duration": f"{duration:.2f}s",
+                        "Status": "CANCELLED",
+                        "Resume": f"Can resume from course {idx}",
                     }
-                    result_writer.add_result(
-                        test_case,
-                        (
-                            ResultWriter.RESULT_OK
-                            if hop_result["success"]
-                            else ResultWriter.RESULT_NG
-                        ),
-                        error_message=(
-                            None if hop_result["success"] else "Hop verification failed"
-                        ),
+                    self.structured_logger.automation_end(
+                        "POOL HOPPING AUTOMATION", False, summary
                     )
+                    return False
 
-                    sleep(0.5)
+                # Prepare test case with ID
+                test_case = course_data.copy()
+                test_case["test_case_id"] = idx
 
-                # Save results
-                result_writer.flush()
-                result_writer.print_summary()
+                # Skip if already completed
+                if resume and result_writer.is_completed(test_case):
+                    course_name = course_data.get("コース名", f"Course_{idx}")
+                    self.structured_logger.info(
+                        f"✓ Course {idx} ({course_name}) already completed, skipping..."
+                    )
+                    skipped_count += 1
+                    continue
 
-                # Summary statistics
-                duration = time.time() - start_time
-                success_rate = (successful_hops / num_hops) * 100 if num_hops > 0 else 0
+                # Log course execution
+                course_name = course_data.get("コース名", f"Course_{idx}")
+                total = len(courses_data) + start_course_index - 1
+                self.structured_logger.info(
+                    f"▶ Executing Course {idx}/{total}: {course_name}"
+                )
 
-                summary = {
-                    "Total Hops": num_hops,
-                    "Successful": successful_hops,
-                    "Success Rate": f"{success_rate:.1f}%",
-                    "Duration": f"{duration:.2f}s",
-                    "Results File": output_path,
+                # Run the course
+                course_result = self.run_hopping_course(
+                    course_data, idx, use_detector=use_detector
+                )
+
+                # Extract results
+                is_ok = course_result.get("success", False)
+                verification_details = course_result.get("verification_details", {})
+
+                if is_ok:
+                    success_count += 1
+                else:
+                    failed_count += 1
+
+                # Prepare result data
+                result_data = {
+                    "test_case_id": test_case.get("test_case_id"),
+                    "コース名": course_data.get("コース名", ""),
                 }
-                self.structured_logger.automation_end(
-                    "HOPPING AUTOMATION", True, summary
+
+                # Add verification results
+                for field, details in verification_details.items():
+                    status = details.get("status", "unknown")
+                    result_data[f"{field}_expected"] = details.get("expected", "")
+                    result_data[f"{field}_extracted"] = details.get(
+                        "extracted_value", ""
+                    )
+                    result_data[f"{field}_status"] = "OK" if status == "match" else "NG"
+
+                # Save result
+                result_writer.add_result(
+                    result_data,
+                    ResultWriter.RESULT_OK if is_ok else ResultWriter.RESULT_NG,
+                    error_message=None if is_ok else "Verification failed",
                 )
 
-                return True
-
-            else:
-                self.structured_logger.error(
-                    "✗ Either 'data_path' or 'num_hops' must be provided"
+                # Progress log
+                total = len(courses_data) + start_course_index - 1
+                self.structured_logger.info(
+                    f"Progress: {idx}/{total} | ✓{success_count} ✗{failed_count}"
                 )
-                return False
+
+                sleep(1.0)
+
+            # Final save and summary
+            result_writer.flush()
+            result_writer.print_summary()
+
+            self._manage_resume_state("complete")
+
+            duration = time.time() - start_time
+            total_processed = len(courses_data) - skipped_count
+            success_rate = (
+                (success_count / total_processed * 100) if total_processed > 0 else 0
+            )
+
+            summary = {
+                "Total Courses": len(courses_data),
+                "Processed": total_processed,
+                "Skipped": skipped_count,
+                "Success": success_count,
+                "Failed": failed_count,
+                "Success Rate": f"{success_rate:.1f}%",
+                "Total Duration": f"{duration:.2f}s",
+                "Results File": output_path,
+            }
+
+            all_success = failed_count == 0 and total_processed > 0
+            self.structured_logger.automation_end(
+                "POOL HOPPING AUTOMATION", all_success, summary
+            )
+
+            return True
 
         except CancellationError:
             if result_writer:
@@ -582,28 +703,24 @@ class HoppingAutomation(BaseAutomation):
             return False
 
     def run(
-        self, config: Optional[Dict[str, Any]] = None, data_path: Optional[str] = None
+        self,
+        data_path: str,
+        use_detector: bool = False,
+        output_path: Optional[str] = None,
+        force_new_session: bool = False,
+        start_course_index: int = 1,
     ) -> bool:
-        """
-        Main entry point for Hopping automation.
-
-        Supports 2 modes:
-        1. Config mode: Pass config dict with num_hops
-        2. Data mode: Pass data_path to CSV/JSON file
+        """Main entry point for Pool Hopping automation.
 
         Args:
-            config: Configuration dict (mode 1)
-            data_path: Path to CSV/JSON data file (mode 2)
+            data_path: Path to CSV/JSON file with course data.
+            use_detector: Use detector (YOLO/Template).
+            output_path: Output result path (None = auto-generate).
+            force_new_session: Force start new session.
+            start_course_index: Index of course to start from (1-based).
 
         Returns:
-            bool: True if successful
-
-        Example usage:
-            # Mode 1: Direct config
-            hopping.run(config={'num_hops': 5})
-
-            # Mode 2: Load from file
-            hopping.run(data_path='./data/hopping_tests.csv')
+            bool: True if successful.
         """
         try:
             self.check_cancelled("before starting")
@@ -616,20 +733,14 @@ class HoppingAutomation(BaseAutomation):
             return False
 
         try:
-            # Mode 2: Load from data file
-            if data_path:
-                success = self.run_all_hops(data_path=data_path)
-            # Mode 1: Direct config
-            elif config:
-                num_hops = config.get("num_hops", 1)
-                success = self.run_all_hops(num_hops=num_hops)
-            else:
-                self.structured_logger.error(
-                    "✗ Either 'config' or 'data_path' must be provided"
-                )
-                return False
-
-            return success
+            return self.run_all_courses(
+                data_path,
+                output_path=output_path,
+                use_detector=use_detector,
+                resume=True,
+                force_new_session=force_new_session,
+                start_course_index=start_course_index,
+            )
         except CancellationError:
             self.structured_logger.warning("Automation cancelled")
             return False

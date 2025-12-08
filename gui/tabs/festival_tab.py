@@ -278,13 +278,17 @@ class FestivalTab(BaseAutomationTab):
     def _run_automation(self, file_path: str, config: Dict[str, Any]):
         """Override to handle Festival-specific automation logic."""
         try:
-            # Initialize automation instance if not already done
-            if not self.automation_instance:
-                self.automation_instance = self.automation_class(
-                    self.agent, config, cancel_event=self.thread_cancel_event
-                )
-                if not self.automation_instance:
-                    raise RuntimeError("Failed to initialize Festival automation")
+            # Initialize automation instance with thread-safe access
+            with self._state_lock:
+                if not self._automation_instance:
+                    self._automation_instance = self.automation_class(
+                        self.agent, config, cancel_event=self.thread_cancel_event
+                    )
+                    if not self._automation_instance:
+                        raise RuntimeError("Failed to initialize Festival automation")
+
+                # Get reference while holding lock
+                automation = self._automation_instance
 
             # Get output path if specified
             output_file = self.output_file_var.get().strip()
@@ -296,8 +300,8 @@ class FestivalTab(BaseAutomationTab):
             # Get start stage index
             start_stage_index = config.get("start_stage_index", 1)
 
-            # Run with all parameters (always use the new run method that supports resume)
-            success = self.automation_instance.run(
+            # Run with all parameters (outside lock to allow cancellation)
+            success = automation.run(
                 data_path=file_path,
                 use_detector=False,  # Can be extended to support detector option in GUI
                 output_path=output_path,

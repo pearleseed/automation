@@ -1,11 +1,11 @@
 """Core package for automation framework."""
 
 from .detector import (
+    YOLO_AVAILABLE,
     DetectionResult,
+    OCRTextProcessor,
     TemplateMatcher,
     TextProcessor,
-    OCRTextProcessor,
-    YOLO_AVAILABLE,
 )
 
 __all__ = [

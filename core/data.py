@@ -1,15 +1,19 @@
 """
-Data Module - CSV and JSON data read/write management
+Data Module - CSV and JSON data read/write management.
+
+This module provides safe file I/O operations with atomic writes,
+proper error handling, and input validation.
 """
 
 import csv
 import json
 import os
+import tempfile
 from collections import Counter
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from .utils import ensure_directory, get_logger
+from .utils import ensure_directory, get_logger, validate_file_path
 
 logger = get_logger(__name__)
 
@@ -17,10 +21,25 @@ logger = get_logger(__name__)
 # ==================== DATA LOADING ====================
 
 
-def _validate_file(file_path: str) -> None:
-    """Validate file exists, raise FileNotFoundError if not."""
-    if not os.path.exists(file_path):
-        logger.error(f" File not found: {file_path}")
+def _validate_file(file_path: str, check_exists: bool = True) -> None:
+    """Validate file path for security and existence.
+
+    Args:
+        file_path: Path to validate.
+        check_exists: Whether to check if file exists.
+
+    Raises:
+        FileNotFoundError: If file doesn't exist and check_exists is True.
+        ValueError: If path is invalid or unsafe.
+    """
+    if not file_path:
+        raise ValueError("File path cannot be empty")
+
+    if not validate_file_path(file_path, allow_absolute=True):
+        raise ValueError(f"Invalid or unsafe file path: {file_path}")
+
+    if check_exists and not os.path.exists(file_path):
+        logger.error(f"File not found: {file_path}")
         raise FileNotFoundError(f"File not found: {file_path}")
 
 
@@ -83,125 +102,194 @@ def load_data(file_path: str, encoding: str = "utf-8-sig") -> List[Dict[str, Any
 # ==================== DATA WRITING ====================
 
 
+def _atomic_write(file_path: str, write_func, encoding: str = "utf-8-sig") -> bool:
+    """Perform atomic file write using temp file and rename.
+
+    This prevents file corruption if the process crashes during write.
+
+    Args:
+        file_path: Target file path.
+        write_func: Function that takes file handle and writes data.
+        encoding: File encoding.
+
+    Returns:
+        bool: True if write successful, False otherwise.
+    """
+    directory = os.path.dirname(file_path) or "."
+    ensure_directory(directory)
+
+    # Create temp file in same directory for atomic rename
+    fd, temp_path = tempfile.mkstemp(dir=directory, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding=encoding, newline="") as f:
+            write_func(f)
+
+        # Atomic rename (works on same filesystem)
+        os.replace(temp_path, file_path)
+        return True
+    except Exception as e:
+        logger.error(f"Atomic write failed: {e}")
+        # Clean up temp file on failure
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        return False
+
+
 def write_csv(
     file_path: str,
     data: List[Dict[str, Any]],
     encoding: str = "utf-8-sig",
     mode: str = "w",
 ) -> bool:
-    """
-    Write list of dictionaries to CSV file.
+    """Write list of dictionaries to CSV file with atomic write.
 
-    Note: For incremental writes, always use mode='w' to rewrite entire file
-    with all accumulated results. This ensures data consistency.
+    Uses atomic write (temp file + rename) to prevent corruption.
+
+    Args:
+        file_path: Output file path.
+        data: List of dictionaries to write.
+        encoding: File encoding (default: utf-8-sig for Excel compatibility).
+        mode: Write mode (ignored, always uses atomic write).
+
+    Returns:
+        bool: True if write successful, False otherwise.
     """
     if not data:
-        logger.warning(" No data to write")
+        logger.warning("No data to write")
         return False
 
     try:
-        if directory := os.path.dirname(file_path):
-            ensure_directory(directory)
+        _validate_file(file_path, check_exists=False)
 
-        # Always write in 'w' mode to ensure complete file rewrite
-        # This is safe because ResultWriter maintains all results in memory
-        with open(file_path, "w", newline="", encoding=encoding) as f:
-            # Collect all unique keys from all dictionaries
-            all_keys = set().union(*(d.keys() for d in data))
+        # Collect all unique keys from all dictionaries
+        all_keys = set().union(*(d.keys() for d in data))
 
-            # Prioritize common fields for better readability
-            common_fields = ["test_case_id", "timestamp", "result", "error_message"]
-            ordered_fields = [f for f in common_fields if f in all_keys]
+        # Prioritize common fields for better readability
+        common_fields = ["test_case_id", "timestamp", "result", "error_message"]
+        ordered_fields = [f for f in common_fields if f in all_keys]
 
-            # Add フェス名 and フェスランク after common fields
-            festival_fields = ["フェス名", "フェスランク"]
-            ordered_fields.extend([f for f in festival_fields if f in all_keys])
+        # Add フェス名 and フェスランク after common fields
+        festival_fields = ["フェス名", "フェスランク"]
+        ordered_fields.extend([f for f in festival_fields if f in all_keys])
 
-            # Sort remaining fields with custom order: group by type (expected, extracted, status)
-            # This makes it easier to compare expected vs extracted values
-            remaining_keys = [k for k in all_keys if k not in ordered_fields]
+        # Sort remaining fields with custom order: group by type (expected, extracted, status)
+        # This makes it easier to compare expected vs extracted values
+        remaining_keys = [k for k in all_keys if k not in ordered_fields]
 
-            # Separate pre_ and post_ fields
-            pre_fields = [k for k in remaining_keys if k.startswith("pre_")]
-            post_fields = [k for k in remaining_keys if k.startswith("post_")]
-            other_fields = [
-                k for k in remaining_keys if not k.startswith(("pre_", "post_"))
-            ]
+        # Separate pre_ and post_ fields
+        pre_fields = [k for k in remaining_keys if k.startswith("pre_")]
+        post_fields = [k for k in remaining_keys if k.startswith("post_")]
+        other_fields = [
+            k for k in remaining_keys if not k.startswith(("pre_", "post_"))
+        ]
 
-            # Group fields by suffix type for better readability
-            def sort_verification_fields_by_type(fields, prefix):
-                # Separate by suffix type
-                expected_fields = sorted([f for f in fields if f.endswith("_expected")])
-                extracted_fields = sorted(
-                    [f for f in fields if f.endswith("_extracted")]
-                )
-                status_fields = sorted([f for f in fields if f.endswith("_status")])
+        # Group fields by suffix type for better readability
+        def sort_verification_fields_by_type(fields, prefix):
+            # Separate by suffix type
+            expected_fields = sorted([f for f in fields if f.endswith("_expected")])
+            extracted_fields = sorted([f for f in fields if f.endswith("_extracted")])
+            status_fields = sorted([f for f in fields if f.endswith("_status")])
 
-                # Return in order: all expected, all extracted, all status
-                return expected_fields + extracted_fields + status_fields
+            # Return in order: all expected, all extracted, all status
+            return expected_fields + extracted_fields + status_fields
 
-            pre_ordered = sort_verification_fields_by_type(pre_fields, "pre_")
-            post_ordered = sort_verification_fields_by_type(post_fields, "post_")
+        pre_ordered = sort_verification_fields_by_type(pre_fields, "pre_")
+        post_ordered = sort_verification_fields_by_type(post_fields, "post_")
 
-            fieldnames = (
-                ordered_fields + pre_ordered + post_ordered + sorted(other_fields)
-            )
+        fieldnames = ordered_fields + pre_ordered + post_ordered + sorted(other_fields)
 
+        def write_data(f):
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(data)
 
-        logger.debug(f" Wrote {len(data)} rows to CSV: {file_path}")
-        return True
+        if _atomic_write(file_path, write_data, encoding):
+            logger.debug(f"Wrote {len(data)} rows to CSV: {file_path}")
+            return True
+        return False
+
+    except ValueError as e:
+        logger.error(f"Invalid file path: {e}")
+        return False
     except Exception as e:
-        logger.error(f" Error writing CSV: {e}")
+        logger.error(f"Error writing CSV: {e}")
         return False
 
 
 def write_json(
     file_path: str, data: List[Dict[str, Any]], encoding: str = "utf-8-sig"
 ) -> bool:
-    """Write list of dictionaries to JSON file."""
+    """Write list of dictionaries to JSON file with atomic write.
+
+    Args:
+        file_path: Output file path.
+        data: List of dictionaries to write.
+        encoding: File encoding.
+
+    Returns:
+        bool: True if write successful, False otherwise.
+    """
     if not data:
-        logger.warning(" No data to write")
+        logger.warning("No data to write")
         return False
 
     try:
-        if directory := os.path.dirname(file_path):
-            ensure_directory(directory)
+        _validate_file(file_path, check_exists=False)
 
-        with open(file_path, "w", encoding=encoding) as f:
+        def write_data(f):
             json.dump(data, f, indent=2, ensure_ascii=False)
 
-        logger.debug(f" Wrote {len(data)} items to JSON: {file_path}")
-        return True
+        if _atomic_write(file_path, write_data, encoding):
+            logger.debug(f"Wrote {len(data)} items to JSON: {file_path}")
+            return True
+        return False
+
+    except ValueError as e:
+        logger.error(f"Invalid file path: {e}")
+        return False
     except Exception as e:
-        logger.error(f" Error writing JSON: {e}")
+        logger.error(f"Error writing JSON: {e}")
         return False
 
 
 def write_html(
     file_path: str, data: List[Dict[str, Any]], encoding: str = "utf-8-sig"
 ) -> bool:
-    """Write list of dictionaries to HTML report."""
+    """Write list of dictionaries to HTML report with atomic write.
+
+    Args:
+        file_path: Output file path.
+        data: List of dictionaries to write.
+        encoding: File encoding.
+
+    Returns:
+        bool: True if write successful, False otherwise.
+    """
     if not data:
-        logger.warning(" No data to write")
+        logger.warning("No data to write")
         return False
 
     try:
         from core.utils import generate_html_report_content
 
-        if directory := os.path.dirname(file_path):
-            ensure_directory(directory)
-
+        _validate_file(file_path, check_exists=False)
         html_content = generate_html_report_content(data)
-        with open(file_path, "w", encoding=encoding) as f:
+
+        def write_data(f):
             f.write(html_content)
 
-        logger.debug(f" Wrote {len(data)} items to HTML: {file_path}")
-        return True
+        if _atomic_write(file_path, write_data, encoding):
+            logger.debug(f"Wrote {len(data)} items to HTML: {file_path}")
+            return True
+        return False
+
+    except ValueError as e:
+        logger.error(f"Invalid file path: {e}")
+        return False
     except Exception as e:
-        logger.error(f" Error writing HTML: {e}")
+        logger.error(f"Error writing HTML: {e}")
         return False
 
 

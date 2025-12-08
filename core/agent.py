@@ -1,16 +1,28 @@
-"""Agent Module - Device interaction and OCR."""
+"""Agent Module - Device interaction and OCR.
 
+This module provides a unified interface for device interaction through Airtest
+and OCR operations with thread-safe implementations and proper resource management.
+"""
+
+import threading
 import time
-from typing import Any, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
-import cv2
+import cv2  # type: ignore[import-untyped]
 import numpy as np
 from airtest.core.api import connect_device, swipe, touch
 from airtest.core.error import AirtestError
 
 import core.oneocr_optimized as oneocr
 
-from .config import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY, DEFAULT_TOUCH_TIMES
+from .config import (
+    DEFAULT_CONNECTION_TIMEOUT,
+    DEFAULT_DEVICE_URL,
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_OCR_TIMEOUT,
+    DEFAULT_RETRY_DELAY,
+    DEFAULT_TOUCH_TIMES,
+)
 from .utils import get_logger
 
 # ==================== OCR ENGINE ENHANCEMENT ====================
@@ -21,7 +33,19 @@ class EnhancedOcrEngine(oneocr.OcrEngine):
 
     This class extends the OcrEngine to process images directly from NumPy arrays,
     eliminating the overhead of encoding/decoding operations while maintaining thread safety.
+
+    Attributes:
+        timeout: Maximum time in seconds for OCR operations (default: 5.0).
     """
+
+    def __init__(self, timeout: float = DEFAULT_OCR_TIMEOUT):
+        """Initialize enhanced OCR engine.
+
+        Args:
+            timeout: Maximum time in seconds for OCR operations.
+        """
+        super().__init__()
+        self.timeout = timeout
 
     def recognize(self, image_array: np.ndarray) -> dict:
         """Process image from NumPy array efficiently without encode/decode overhead.
@@ -32,9 +56,16 @@ class EnhancedOcrEngine(oneocr.OcrEngine):
         Returns:
             dict: OCR recognition result containing detected text and bounding boxes.
                 Returns empty result with error message if image size is invalid.
+
+        Note:
+            Thread-safe: uses internal lock for concurrent access.
         """
         if not self._initialized:
             return self._error_result("OCR engine not initialized")
+
+        # Validate input
+        if image_array is None or image_array.size == 0:
+            return self._error_result("Empty or invalid image array")
 
         # Validate image size
         height, width = image_array.shape[:2]
@@ -48,6 +79,9 @@ class EnhancedOcrEngine(oneocr.OcrEngine):
             img_bgra = cv2.cvtColor(image_array, cv2.COLOR_GRAY2BGRA)
         elif channels == 3:
             img_bgra = cv2.cvtColor(image_array, cv2.COLOR_BGR2BGRA)
+        elif channels == 4:
+            # Already BGRA or RGBA - assume BGRA
+            img_bgra = image_array
         else:
             return self._error_result(f"Unsupported channel count: {channels}")
 
@@ -70,73 +104,110 @@ class Agent:
     This class provides a unified interface for interacting with devices through Airtest
     and performing OCR operations. It handles device connection, screenshot capture,
     and text recognition with automatic retry capabilities.
+
+    Thread Safety:
+        - Device operations are protected by _device_lock
+        - OCR operations are protected by the OCR engine's internal lock
+        - State variables use atomic operations where possible
     """
 
     def __init__(
         self,
-        device_url: str = "Windows:///?title_re=DOAX VenusVacation.*",
+        device_url: Optional[str] = None,
         enable_retry: bool = True,
         auto_connect: bool = True,
+        connection_timeout: float = DEFAULT_CONNECTION_TIMEOUT,
     ):
         """Initialize Agent with device connection and OCR engine.
 
         Args:
-            device_url: Device connection URL for Airtest (e.g., Windows:///...).
+            device_url: Device connection URL for Airtest. If None, uses DEFAULT_DEVICE_URL.
             enable_retry: Enable automatic retry on connection failure.
             auto_connect: Automatically connect to device on initialization.
+            connection_timeout: Timeout for connection attempts in seconds.
 
         Raises:
             RuntimeError: If agent initialization or device connection fails.
         """
         self.logger = get_logger(__name__)
         self.device = None
-        self.ocr_engine = None
+        self.ocr_engine: Optional[EnhancedOcrEngine] = None
         self._device_verified = False
-        self.device_url = device_url
+        self.device_url = device_url or DEFAULT_DEVICE_URL
+        self.connection_timeout = connection_timeout
+
+        # Thread safety locks
+        self._device_lock = threading.RLock()
+        self._state_lock = threading.Lock()
 
         try:
-            self.ocr_engine = EnhancedOcrEngine()
-            self.logger.info("OCR engine initialized")
-
             if auto_connect:
                 if enable_retry:
-                    if not self.connect_device_with_retry(device_url):
-                        raise RuntimeError(f"Cannot connect to device: {device_url}")
+                    if not self.connect_device_with_retry(self.device_url):
+                        raise RuntimeError(
+                            f"Cannot connect to device: {self.device_url}"
+                        )
                 else:
-                    self.device = connect_device(device_url)
-                    self.logger.info(f"Connected to device: {device_url}")
+                    with self._device_lock:
+                        self.device = connect_device(self.device_url)
+                    self.logger.info(f"Connected to device: {self.device_url}")
                     if not self._verify_device():
                         self.logger.warning("Device connected but verification failed")
+                    self._init_ocr_engine()
 
         except Exception as e:
             self.logger.error(f"Agent initialization failed: {e}")
             raise RuntimeError(f"Agent initialization failed: {e}") from e
 
+    def _init_ocr_engine(self) -> None:
+        """Initialize OCR engine lazily when device is connected.
+
+        This method is called when the device connection is established,
+        ensuring OCR resources are only loaded when actually needed.
+        Thread-safe: uses state lock to prevent double initialization.
+        """
+        with self._state_lock:
+            if self.ocr_engine is not None:
+                return
+            try:
+                self.ocr_engine = EnhancedOcrEngine(timeout=DEFAULT_OCR_TIMEOUT)
+                self.logger.info("OCR engine initialized")
+            except Exception as e:
+                self.logger.warning(f"OCR engine initialization failed: {e}")
+
     def connect_device_with_retry(
         self,
-        device_url: str = "Windows:///?title_re=DOAX VenusVacation.*",
+        device_url: Optional[str] = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
         retry_delay: float = DEFAULT_RETRY_DELAY,
     ) -> bool:
         """Connect to device with automatic retry on failure.
 
         Args:
-            device_url: Device connection URL for Airtest.
+            device_url: Device connection URL for Airtest. If None, uses instance URL.
             max_retries: Maximum number of retry attempts (default: 3).
             retry_delay: Delay between retries in seconds (default: 1.0).
 
         Returns:
             bool: True if connection successful and verified, False otherwise.
+
+        Thread Safety:
+            Uses device lock to prevent concurrent connection attempts.
         """
+        url = device_url or self.device_url
+
         for attempt in range(max_retries):
             try:
                 self.logger.info(
                     f"Connecting to device (attempt {attempt + 1}/{max_retries})..."
                 )
-                self.device = connect_device(device_url)
+
+                with self._device_lock:
+                    self.device = connect_device(url)
 
                 if self._verify_device():
                     self.logger.info("Device connected and verified")
+                    self._init_ocr_engine()
                     return True
 
                 if attempt < max_retries - 1:
@@ -158,11 +229,16 @@ class Agent:
 
         Returns:
             bool: True if device is functional and can take screenshots, False otherwise.
+
+        Thread Safety:
+            Uses state lock for _device_verified flag.
         """
         try:
-            if self.device and hasattr(self.device, "snapshot"):
-                self._device_verified = True
-                return True
+            with self._device_lock:
+                if self.device and hasattr(self.device, "snapshot"):
+                    with self._state_lock:
+                        self._device_verified = True
+                    return True
             return False
         except (AirtestError, Exception):
             return False
@@ -172,27 +248,41 @@ class Agent:
 
         Returns:
             bool: True if device is connected and verified, False otherwise.
-        """
-        if not self.device:
-            self._device_verified = False
-            return False
-        return self._device_verified or self._verify_device()
 
-    def snapshot(self) -> Optional[Any]:
+        Thread Safety:
+            Uses locks for thread-safe state access.
+        """
+        with self._device_lock:
+            if not self.device:
+                with self._state_lock:
+                    self._device_verified = False
+                return False
+
+        with self._state_lock:
+            if self._device_verified:
+                return True
+
+        return self._verify_device()
+
+    def snapshot(self) -> Optional[np.ndarray]:
         """Take a screenshot of the connected device.
 
         Returns:
-            Screenshot data (usually numpy array or PIL Image) or None if failed.
-        """
-        if not self.device:
-            self.logger.error("Cannot take snapshot: No device connected")
-            return None
+            Screenshot as numpy array (BGR format) or None if failed.
 
-        try:
-            return self.device.snapshot()
-        except Exception as e:
-            self.logger.error(f"Snapshot failed: {e}")
-            return None
+        Thread Safety:
+            Uses device lock for thread-safe snapshot.
+        """
+        with self._device_lock:
+            if not self.device:
+                self.logger.error("Cannot take snapshot: No device connected")
+                return None
+
+            try:
+                return self.device.snapshot()
+            except Exception as e:
+                self.logger.error(f"Snapshot failed: {e}")
+                return None
 
     def snapshot_region(
         self, region: Tuple[int, int, int, int]
@@ -253,25 +343,38 @@ class Agent:
 
         Returns:
             bool: True if touch successful, False otherwise.
+
+        Thread Safety:
+            Uses device lock for thread-safe touch operation.
         """
-        # Convert list to tuple if needed
-        if isinstance(pos, list):
-            if len(pos) != 2:
-                self.logger.error(f"Invalid coordinates: {pos}")
-                return False
-            pos = (float(pos[0]), float(pos[1]))
-
-        if not (isinstance(pos, tuple) and len(pos) == 2):
-            self.logger.error(f"Invalid coordinates: {pos}")
-            return False
-
+        # Validate and convert coordinates
         try:
-            touch(pos, times=times)
-            return True
-        except Exception as e:
-            self.logger.error(f"Touch failed at {pos}: {e}")
-            self._device_verified = False
+            if isinstance(pos, (list, tuple)):
+                if len(pos) != 2:
+                    self.logger.error(f"Invalid coordinates length: {pos}")
+                    return False
+                x, y = float(pos[0]), float(pos[1])
+                # Basic bounds validation
+                if x < 0 or y < 0:
+                    self.logger.error(f"Negative coordinates: ({x}, {y})")
+                    return False
+                pos = (x, y)
+            else:
+                self.logger.error(f"Invalid coordinates type: {type(pos)}")
+                return False
+        except (TypeError, ValueError) as e:
+            self.logger.error(f"Invalid coordinates: {pos}, error: {e}")
             return False
+
+        with self._device_lock:
+            try:
+                touch(pos, times=times)
+                return True
+            except Exception as e:
+                self.logger.error(f"Touch failed at {pos}: {e}")
+                with self._state_lock:
+                    self._device_verified = False
+                return False
 
     def safe_swipe(
         self,
@@ -294,18 +397,40 @@ class Agent:
 
         Returns:
             bool: True if swipe successful, False otherwise.
+
+        Thread Safety:
+            Uses device lock for thread-safe swipe operation.
         """
-        try:
-            swipe(
-                v1,
-                v2=v2,
-                vector=vector,
-                duration=duration,
-                steps=steps,
-                fingers=fingers,
-            )
-            return True
-        except Exception as e:
-            self.logger.error(f"Swipe failed: {e}")
+        with self._device_lock:
+            try:
+                swipe(
+                    v1,
+                    v2=v2,
+                    vector=vector,
+                    duration=duration,
+                    steps=steps,
+                    fingers=fingers,
+                )
+                return True
+            except Exception as e:
+                self.logger.error(f"Swipe failed: {e}")
+                with self._state_lock:
+                    self._device_verified = False
+                return False
+
+    def cleanup(self) -> None:
+        """Clean up resources held by the agent.
+
+        Should be called when the agent is no longer needed to release
+        device connections and OCR engine resources.
+        """
+        with self._device_lock:
+            self.device = None
+
+        with self._state_lock:
             self._device_verified = False
-            return False
+            if self.ocr_engine is not None:
+                # OCR engine cleanup if needed
+                self.ocr_engine = None
+
+        self.logger.info("Agent resources cleaned up")

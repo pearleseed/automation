@@ -1,7 +1,8 @@
 """
 Base Automation Module - Common functionality for all automations.
 
-This module provides shared methods used by Festival, Gacha, and Hopping automations.
+This module provides shared methods used by Festival, Gacha, and Hopping automations,
+including template matching, OCR processing, screenshot capture, and cancellation support.
 """
 
 import os
@@ -14,15 +15,17 @@ from airtest.core.api import Template, exists, sleep
 from .agent import Agent
 from .config import DEFAULT_TOUCH_TIMES
 from .detector import TextProcessor
-from .utils import ensure_directory, get_logger
+from .utils import ensure_directory, get_logger, safe_join_path, sanitize_filename
 
 logger = get_logger(__name__)
 
 
 class CancellationError(Exception):
-    """Exception raised when automation is cancelled."""
+    """Exception raised when automation is cancelled by user or system."""
 
-    pass
+    def __init__(self, message: str = "Operation cancelled", context: str = ""):
+        self.context = context
+        super().__init__(f"{message}{f' during {context}' if context else ''}")
 
 
 class StepResult(Enum):
@@ -177,12 +180,22 @@ class BaseAutomation:
         """Check if cancellation was requested."""
         return self.cancel_event is not None and self.cancel_event.is_set()
 
-    def check_cancelled(self, context: str = ""):
-        """Check cancellation and raise CancellationError if cancelled."""
+    def check_cancelled(self, context: str = "") -> None:
+        """Check cancellation and raise CancellationError if cancelled.
+
+        Args:
+            context: Description of current operation for logging.
+
+        Raises:
+            CancellationError: If cancellation was requested.
+        """
         if self.is_cancelled():
-            msg = f"Cancellation requested{f' during {context}' if context else ''}"
-            logger.info(msg)
-            raise CancellationError(msg)
+            logger.info(
+                f"Cancellation requested during {context}"
+                if context
+                else "Cancellation requested"
+            )
+            raise CancellationError(context=context)
 
     def touch_template(
         self,
@@ -308,17 +321,41 @@ class BaseAutomation:
         return roi_image
 
     def snapshot_and_save(self, folder_name: str, filename: str) -> Optional[Any]:
-        """Take screenshot and save to folder."""
+        """Take screenshot and save to folder with sanitized filenames.
+
+        Uses safe_join_path to prevent path traversal attacks.
+
+        Args:
+            folder_name: Folder name (will be sanitized).
+            filename: File name (will be sanitized).
+
+        Returns:
+            Screenshot array if successful, None otherwise.
+        """
         try:
             screenshot = self.agent.snapshot()
             if screenshot is None:
                 return None
 
-            folder_path = os.path.join(self.snapshot_dir, folder_name)
-            ensure_directory(folder_path)
-            file_path = os.path.join(folder_path, filename)
+            # Use safe_join_path to prevent path traversal
+            folder_path = safe_join_path(self.snapshot_dir, folder_name)
+            if folder_path is None:
+                logger.error(f"✗ Invalid folder path: {folder_name}")
+                return None
+
+            if not ensure_directory(folder_path):
+                logger.error(f"✗ Cannot create folder: {folder_path}")
+                return None
+
+            # Sanitize filename and create full path safely
+            safe_filename = sanitize_filename(filename)
+            file_path = safe_join_path(folder_path, safe_filename)
+            if file_path is None:
+                logger.error(f"✗ Invalid file path: {filename}")
+                return None
+
             cv2.imwrite(file_path, screenshot)
-            logger.info(f"✓ Saved: {filename}")
+            logger.info(f"✓ Saved: {safe_filename}")
             return screenshot
 
         except Exception as e:

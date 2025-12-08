@@ -1,23 +1,80 @@
-"""Configuration Module - System-wide configuration management"""
+"""Configuration Module - System-wide configuration management.
 
+This module provides centralized configuration management with environment
+variable support, validation, and type safety.
+"""
+
+import os
 from typing import Any, Dict
 
 from .utils import get_logger
 
 logger = get_logger(__name__)
 
+
+# ==================== ENVIRONMENT VARIABLE HELPERS ====================
+
+
+def get_env_str(key: str, default: str) -> str:
+    """Get string value from environment variable."""
+    return os.environ.get(key, default)
+
+
+def get_env_int(key: str, default: int) -> int:
+    """Get integer value from environment variable with validation."""
+    value = os.environ.get(key)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        logger.warning(f"Invalid integer for {key}: {value}, using default: {default}")
+        return default
+
+
+def get_env_float(key: str, default: float) -> float:
+    """Get float value from environment variable with validation."""
+    value = os.environ.get(key)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        logger.warning(f"Invalid float for {key}: {value}, using default: {default}")
+        return default
+
+
+def get_env_bool(key: str, default: bool) -> bool:
+    """Get boolean value from environment variable."""
+    value = os.environ.get(key)
+    if value is None:
+        return default
+    return value.lower() in ("true", "1", "yes", "on")
+
+
 # ==================== DEFAULT PATHS ====================
+# Paths can be overridden via environment variables
 DEFAULT_PATHS: Dict[str, str] = {
-    "templates": "./templates/jp",
-    "results": "./result",
-    "snapshots": "./result/snapshots",
-    "logs": "./logs",
+    "templates": get_env_str("AUTOCP_TEMPLATES_PATH", "./templates/jp"),
+    "results": get_env_str("AUTOCP_RESULTS_PATH", "./result"),
+    "snapshots": get_env_str("AUTOCP_SNAPSHOTS_PATH", "./result/snapshots"),
+    "logs": get_env_str("AUTOCP_LOGS_PATH", "./logs"),
 }
 
 # ==================== DEFAULT VALUES ====================
-DEFAULT_MAX_RETRIES: int = 3  # Default maximum retry attempts
-DEFAULT_RETRY_DELAY: float = 1.0  # Default delay between retries (seconds)
-DEFAULT_TOUCH_TIMES: int = 1  # Default number of times to touch a template
+DEFAULT_MAX_RETRIES: int = get_env_int("AUTOCP_MAX_RETRIES", 3)
+DEFAULT_RETRY_DELAY: float = get_env_float("AUTOCP_RETRY_DELAY", 1.0)
+DEFAULT_TOUCH_TIMES: int = get_env_int("AUTOCP_TOUCH_TIMES", 1)
+
+# ==================== TIMEOUT SETTINGS ====================
+DEFAULT_OPERATION_TIMEOUT: float = get_env_float("AUTOCP_OPERATION_TIMEOUT", 30.0)
+DEFAULT_CONNECTION_TIMEOUT: float = get_env_float("AUTOCP_CONNECTION_TIMEOUT", 10.0)
+DEFAULT_OCR_TIMEOUT: float = get_env_float("AUTOCP_OCR_TIMEOUT", 5.0)
+
+# ==================== DEVICE SETTINGS ====================
+DEFAULT_DEVICE_URL: str = get_env_str(
+    "AUTOCP_DEVICE_URL", "Windows:///?title_re=DOAX VenusVacation.*"
+)
 
 # ==================== ROI CONFIGURATION ====================
 # Format: [x1, x2, y1, y2] - pixel coordinates
@@ -43,9 +100,9 @@ GACHA_ROI_CONFIG: Dict[str, list] = {
 }
 
 HOPPING_ROI_CONFIG: Dict[str, list] = {
-    "world_name": [50, 400, 20, 80],  # Current world name
-    "world_level": [450, 650, 20, 80],  # World level
-    "hop_cooldown": [800, 1000, 500, 550],  # Hop cooldown time
+    "コース名": [50, 400, 20, 80],  # Course name
+    "アイテム名": [450, 800, 100, 160],  # Item name
+    "獲得数": [800, 950, 100, 160],  # Acquired quantity
 }
 
 
@@ -133,17 +190,23 @@ HOPPING_CONFIG: Dict[str, Any] = {
     "templates_path": DEFAULT_PATHS["templates"],
     "snapshot_dir": f"{DEFAULT_PATHS['results']}/hopping/snapshots",
     "results_dir": f"{DEFAULT_PATHS['results']}/hopping/results",
-    # Timing
+    # Timing & Retry
     "wait_after_touch": 1.0,
-    "loading_wait": 5.0,  # Loading wait when hopping
-    "cooldown_wait": 3.0,  # Cooldown wait time
-    # Hop settings
-    "max_hops": 10,
-    "retry_on_fail": True,
-    "max_retries": 3,
-    # Detector
+    "max_step_retries": 5,
+    "retry_delay": 1.0,
+    # Fuzzy matching (0.9+=strict, 0.7-0.8=balanced, 0.5-0.6=lenient)
+    "fuzzy_matching": {"enabled": True, "threshold": 0.7},
+    # Detector (yolo/template/auto)
     "use_detector": False,
-    "detector_type": "auto",
+    "detector_type": "template",
+    "yolo_config": {"model_path": "yolo11n.pt", "confidence": 0.25, "device": "cpu"},
+    "template_config": {
+        "templates_dir": DEFAULT_PATHS["templates"],
+        "threshold": 0.85,
+        "method": "TM_CCOEFF_NORMED",
+    },
+    # ROI groups for verification
+    "verification_rois": ["アイテム名", "獲得数"],
 }
 
 

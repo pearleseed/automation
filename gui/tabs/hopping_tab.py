@@ -1,25 +1,26 @@
 """
-Hopping Tab for GUI
+Hopping Tab for GUI - Pool Hopping Automation
 """
 
+import os
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 from typing import Any, Dict
 
 from automations.hopping import HoppingAutomation
 from core.agent import Agent
 from core.utils import get_logger
 from gui.components.base_tab import BaseAutomationTab
-from gui.utils.ui_utils import UIUtils
 
 logger = get_logger(__name__)
 
 
 class HoppingTab(BaseAutomationTab):
-    """Tab for Hopping Automation with world transition verification.
+    """Tab for Pool Hopping Automation with CSV verification and resume support.
 
-    This tab provides UI for configuring and running world hopping automation,
-    including hop count, loading wait times, and result tracking.
+    This tab provides UI for configuring and running pool hopping automation,
+    including data file selection, output configuration, and resume options
+    for interrupted sessions.
     """
 
     def __init__(self, parent, agent: Agent):
@@ -27,95 +28,170 @@ class HoppingTab(BaseAutomationTab):
 
     def _setup_tab_specific_vars(self):
         """Setup Hopping-specific variables."""
-        self.num_hops_var = tk.StringVar(value="5")
-        self.loading_wait_var = tk.StringVar(value="5.0")
-        self.results_var = tk.StringVar(value="No results yet")
+        self.output_file_var = tk.StringVar(value="")
+        self.force_new_session_var = tk.BooleanVar(value=False)
+        self.start_course_var = tk.StringVar(value="1")
+        self.loaded_courses = []
+
+    def _setup_file_section(self, parent):
+        """Override to combine file selection and course selection in one compact section."""
+        file_section = ttk.LabelFrame(parent, text="Data & Course Selection", padding=8)
+        file_section.pack(fill="x", pady=(0, 6))
+
+        # Row 1: File selection
+        row1 = ttk.Frame(file_section)
+        row1.pack(fill="x", pady=(0, 3))
+
+        ttk.Label(row1, text="Data File:", font=("Segoe UI", 9, "bold"), width=12).pack(
+            side="left"
+        )
+        ttk.Entry(row1, textvariable=self.file_path_var, font=("Segoe UI", 9)).pack(
+            side="left", fill="x", expand=True, padx=3
+        )
+        ttk.Button(row1, text="Browse", command=self.browse_file, width=8).pack(
+            side="left", padx=2
+        )
+        ttk.Button(row1, text="Preview", command=self.preview_data, width=8).pack(
+            side="left", padx=2
+        )
+
+        # Row 2: Course selection
+        row2 = ttk.Frame(file_section)
+        row2.pack(fill="x", pady=(3, 0))
+
+        ttk.Label(
+            row2, text="Start Course:", font=("Segoe UI", 9, "bold"), width=12
+        ).pack(side="left")
+        self.course_combo = ttk.Combobox(
+            row2,
+            textvariable=self.start_course_var,
+            values=["1"],
+            state="readonly",
+            font=("Segoe UI", 9),
+        )
+        self.course_combo.pack(side="left", fill="x", expand=True, padx=3)
+
+        # Help text
+        ttk.Label(
+            file_section,
+            text="Select data file, then choose starting course from dropdown",
+            font=("Segoe UI", 8),
+            foreground="#666",
+        ).pack(anchor="w", pady=(3, 0))
 
     def _create_config_ui(self, parent):
         """Create Hopping-specific configuration UI with compact design."""
-        # Hop Configuration
-        config_section = ttk.LabelFrame(parent, text="Hopping Settings", padding=8)
-        config_section.pack(fill="x", pady=(0, 6))
 
-        config_inner = ttk.Frame(config_section)
-        config_inner.pack(fill="x")
+        # Output Configuration
+        output_section = ttk.LabelFrame(parent, text="Output Settings", padding=8)
+        output_section.pack(fill="x", pady=(0, 6))
 
-        # Number of hops
-        ttk.Label(
-            config_inner, text="Number of Hops:", font=("Segoe UI", 9, "bold")
-        ).grid(row=0, column=0, sticky="w", pady=3)
+        output_inner = ttk.Frame(output_section)
+        output_inner.pack(fill="x")
+
+        # Output file (optional)
+        ttk.Label(output_inner, text="Output File:", font=("Segoe UI", 9, "bold")).grid(
+            row=0, column=0, sticky="w", pady=3
+        )
         ttk.Entry(
-            config_inner, textvariable=self.num_hops_var, width=8, font=("Segoe UI", 9)
-        ).grid(row=0, column=1, sticky="w", padx=3, pady=3)
-
+            output_inner, textvariable=self.output_file_var, font=("Segoe UI", 9)
+        ).grid(row=0, column=1, sticky="ew", padx=3, pady=3)
+        ttk.Button(output_inner, text="...", command=self.browse_output, width=3).grid(
+            row=0, column=2, pady=3, ipady=2
+        )
         ttk.Label(
-            config_inner,
-            text="Default pick Hopping Roulette (1-6)",
+            output_inner,
+            text="Optional - auto-generated if empty",
             font=("Segoe UI", 8),
             foreground="#666",
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 3))
+        ).grid(row=1, column=0, columnspan=3, sticky="w")
 
-        # Loading wait time
+        output_inner.columnconfigure(1, weight=1)
+
+        # Resume Configuration
+        resume_section = ttk.LabelFrame(parent, text="Resume Options", padding=8)
+        resume_section.pack(fill="x", pady=(0, 6))
+
+        resume_inner = ttk.Frame(resume_section)
+        resume_inner.pack(fill="x")
+
+        # Force new session checkbox
+        ttk.Checkbutton(
+            resume_inner,
+            text="Force New Session (ignore previous resume state)",
+            variable=self.force_new_session_var,
+        ).pack(anchor="w", pady=3)
         ttk.Label(
-            config_inner, text="Loading Wait:", font=("Segoe UI", 9, "bold")
-        ).grid(row=2, column=0, sticky="w", pady=3)
-        loading_frame = ttk.Frame(config_inner)
-        loading_frame.grid(row=2, column=1, sticky="w", padx=3, pady=3)
-        ttk.Entry(
-            loading_frame,
-            textvariable=self.loading_wait_var,
-            width=6,
-            font=("Segoe UI", 9),
-        ).pack(side="left", padx=(0, 3))
-        ttk.Label(
-            loading_frame, text="sec", font=("Segoe UI", 8), foreground="#666"
-        ).pack(side="left")
+            resume_inner,
+            text="Auto-resume enabled by default if session was interrupted",
+            font=("Segoe UI", 8),
+            foreground="#2E7D32",
+        ).pack(anchor="w", padx=15, pady=(0, 3))
 
     def _get_automation_config(self) -> Dict[str, Any]:
         """Get Hopping-specific automation config."""
-        num_hops = UIUtils.validate_integer_input(
-            self.num_hops_var.get(), min_val=1, max_val=50, default=5
+        start_course_idx = self._parse_course_index(self.start_course_var.get())
+        return {"start_course_index": start_course_idx}
+
+    def _parse_course_index(self, course_str: str) -> int:
+        """Parse course index from selection string."""
+        try:
+            return int(course_str.split(".")[0])
+        except (ValueError, IndexError, AttributeError):
+            return 1
+
+    def browse_output(self):
+        """Browse output file (optional)."""
+        filename = filedialog.asksaveasfilename(
+            title="Save results to (optional)",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
         )
-        loading_wait = UIUtils.validate_numeric_input(
-            self.loading_wait_var.get(), min_val=1.0, max_val=30.0, default=5.0
-        )
+        if filename:
+            self.output_file_var.set(filename)
+            logger.info(f"Output file: {filename}")
 
-        return {
-            "num_hops": num_hops,
-            "loading_wait": loading_wait,
-        }
+    def browse_file(self):
+        """Override to load courses when file is selected."""
+        super().browse_file()
+        self._load_courses_for_selection()
 
-    def _setup_right_column(self, parent):
-        """Override to add Hopping-specific results panel."""
-        # Call parent implementation first
-        super()._setup_right_column(parent)
+    def _load_courses_for_selection(self):
+        """Load courses from selected file and populate course selection dropdown."""
+        file_path = self.file_path_var.get()
+        if not file_path or not os.path.exists(file_path):
+            return
 
-        # Add results summary panel
-        results_frame = ttk.LabelFrame(parent, text="Results Summary", padding=10)
-        results_frame.pack(fill="x", pady=(5, 0))
+        try:
+            from core.data import load_data
 
-        results_label = ttk.Label(
-            results_frame,
-            textvariable=self.results_var,
-            font=("Segoe UI", 9),
-            wraplength=220,
-            justify="left",
-        )
-        results_label.pack(fill="x")
+            self.loaded_courses = load_data(file_path)
+            if not self.loaded_courses:
+                return
 
-    # Use parent's save_config - no need to override
+            # Create course options: "idx. course_name"
+            course_options = [
+                f"{idx}. {course.get('コース名', f'Course_{idx}')}"
+                for idx, course in enumerate(self.loaded_courses, 1)
+            ]
 
-    def load_config(self):
-        """Load Hopping configuration."""
-        config = super().load_config()
-        if config:
-            if "num_hops" in config:
-                self.num_hops_var.set(str(config["num_hops"]))
-            if "loading_wait" in config:
-                self.loading_wait_var.set(str(config["loading_wait"]))
+            # Update combobox
+            self.course_combo["values"] = course_options
+            self.start_course_var.set(course_options[0] if course_options else "1")
+
+            logger.info(f"Loaded {len(self.loaded_courses)} courses for selection")
+
+        except Exception as e:
+            logger.error(f"Failed to load courses: {e}")
 
     def start_automation(self):
         """Override to add Hopping-specific validation and progress initialization."""
+        # Validate
+        file_path = self.file_path_var.get()
+        if not file_path or not os.path.exists(file_path):
+            messagebox.showerror("Error", "Please select a valid CSV/JSON file!")
+            return
+
         # Check device
         if not self.agent.is_device_connected():
             messagebox.showerror(
@@ -123,36 +199,112 @@ class HoppingTab(BaseAutomationTab):
             )
             return
 
-        # Get config and initialize progress
-        config = self.get_config()
-        self.progress_panel.start(config["num_hops"])
-        self.results_var.set("Running...")
+        # Load data to get count for progress tracking
+        from core.data import load_data
 
-        # Set running state and start thread
-        self._set_running_state(True)
-        self.thread_cancel_event.clear()
+        try:
+            data_list = load_data(file_path)
+            if not data_list:
+                messagebox.showerror("Error", "No data in file!")
+                return
 
-        file_path = ""  # Hopping doesn't need file input
-        thread = self.thread_manager.submit_task(
-            self.task_id, self._run_automation, file_path, config
-        )
+            # Get start course index and validate
+            start_course_idx = self._parse_course_index(self.start_course_var.get())
 
-        if not thread:
-            self._automation_finished(False, "Failed to start thread")
+            if start_course_idx > len(data_list):
+                messagebox.showerror(
+                    "Error",
+                    f"Start course {start_course_idx} exceeds total courses ({len(data_list)})!",
+                )
+                return
+
+            # Calculate remaining courses
+            total_count = len(data_list) - start_course_idx + 1
+            if start_course_idx > 1:
+                logger.info(
+                    f"Starting from course {start_course_idx}/{len(data_list)} | "
+                    f"Remaining: {total_count} courses"
+                )
+        except Exception as e:
+            messagebox.showerror("Error", f"Cannot load data:\n{str(e)}")
+            return
+
+        # Check for resume state if not forcing new session
+        if not self.force_new_session_var.get():
+            try:
+                temp_automation = self.automation_class(
+                    self.agent, {}, cancel_event=None
+                )
+                resume_state = temp_automation._manage_resume_state("load")
+
+                if resume_state:
+                    start_course = resume_state.get("start_course_index", 1)
+                    course_info = (
+                        f"• Start Course: {start_course}\n" if start_course > 1 else ""
+                    )
+
+                    resume_msg = (
+                        f"Found unfinished session:\n\n"
+                        f"• Data: {os.path.basename(resume_state.get('data_path', ''))}\n"
+                        f"{course_info}"
+                        f"• Progress: Course {resume_state.get('current_course', 1)}/"
+                        f"{resume_state.get('total_courses', total_count)}\n"
+                        f"• Output: {os.path.basename(resume_state.get('output_path', ''))}\n\n"
+                        f"Continue from where you left off?"
+                    )
+
+                    resume_choice = messagebox.askyesnocancel(
+                        "Resume Session?", resume_msg, icon="question"
+                    )
+
+                    if resume_choice is None:  # Cancel
+                        return
+                    elif resume_choice is False:  # No - start new
+                        self.force_new_session_var.set(True)
+                        temp_automation._manage_resume_state("clear")
+                        logger.info("Starting new session")
+            except Exception as err:
+                logger.warning(f"Resume check failed: {err}")
+
+        # Initialize progress
+        self.progress_panel.start(total_count)
+
+        # Call parent implementation
+        super().start_automation()
 
     def _run_automation(self, file_path: str, config: Dict[str, Any]):
         """Override to handle Hopping-specific automation logic."""
         try:
-            # Initialize automation instance
-            if not self.automation_instance:
-                self.automation_instance = self.automation_class(
-                    self.agent, config, cancel_event=self.thread_cancel_event
-                )
-                if not self.automation_instance:
-                    raise RuntimeError("Failed to initialize Hopping automation")
+            # Initialize automation instance with thread-safe access
+            with self._state_lock:
+                if not self._automation_instance:
+                    self._automation_instance = self.automation_class(
+                        self.agent, config, cancel_event=self.thread_cancel_event
+                    )
+                    if not self._automation_instance:
+                        raise RuntimeError("Failed to initialize Hopping automation")
 
-            # Run hopping
-            success = self.automation_instance.run(config)
+                # Get reference while holding lock
+                automation = self._automation_instance
+
+            # Get output path if specified
+            output_file = self.output_file_var.get().strip()
+            output_path = output_file if output_file else None
+
+            # Get force new session flag
+            force_new_session = self.force_new_session_var.get()
+
+            # Get start course index
+            start_course_index = config.get("start_course_index", 1)
+
+            # Run with all parameters (outside lock to allow cancellation)
+            success = automation.run(
+                data_path=file_path,
+                use_detector=False,
+                output_path=output_path,
+                force_new_session=force_new_session,
+                start_course_index=start_course_index,
+            )
 
             # Call completion callback if not cancelled
             if not self.thread_cancel_event.is_set():
@@ -165,14 +317,3 @@ class HoppingTab(BaseAutomationTab):
             if not self.thread_cancel_event.is_set():
                 self.after(0, lambda: self._automation_finished(False, str(e)))
             raise
-
-    def _automation_finished(self, success: bool, error_msg: str = ""):
-        """Override to add Hopping-specific result updates."""
-        # Call parent implementation
-        super()._automation_finished(success, error_msg)
-
-        # Update results display
-        if success:
-            self.results_var.set("Check results folder for detailed statistics")
-        else:
-            self.results_var.set("Failed - check logs for details")

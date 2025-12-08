@@ -22,13 +22,26 @@ class GachaTab(ttk.Frame):
 
     This tab provides UI for selecting gacha banners visually from template folders,
     configuring pull settings (single/multi, rarity, count), and managing pull queues.
+
+    Thread Safety:
+        - Uses _state_lock (RLock) for protecting is_running state
+        - Uses _cancel_event for safe cancellation
+
+    Memory Management:
+        - Image references stored in _image_refs to prevent garbage collection
+        - cleanup_images() called when reloading banners to free memory
     """
 
     def __init__(self, parent, agent: Agent):
         super().__init__(parent)
         self.agent = agent
-        self.is_running = False
+        self._is_running = False
+        self._state_lock = threading.RLock()  # Use RLock for nested locking
+        self._cancel_event = threading.Event()
         self.selected_gachas: List[Dict[str, Any]] = []
+
+        # Image reference management to prevent memory leaks
+        self._image_refs: List[Any] = []  # Keep references to prevent GC
 
         # UI variables
         self.rarity_var = tk.StringVar(value="ssr")
@@ -245,17 +258,12 @@ class GachaTab(ttk.Frame):
             wraplength=250,
             justify="left",
         ).pack(fill="x")
-        
+
         # Keyboard shortcuts hint
         shortcuts_frame = ttk.LabelFrame(parent, text="Keyboard Shortcuts", padding=6)
         shortcuts_frame.pack(fill="x", pady=(5, 0))
-        
-        shortcuts_text = (
-            "Stop Automation:\n"
-            "• Ctrl+Q\n"
-            "• ESC (Emergency)\n"
-            "• F9"
-        )
+
+        shortcuts_text = "Stop Automation:\n" "• Ctrl+Q\n" "• ESC (Emergency)\n" "• F9"
         ttk.Label(
             shortcuts_frame,
             text=shortcuts_text,
@@ -273,10 +281,17 @@ class GachaTab(ttk.Frame):
             self.templates_path_var.set(d)
             self.load_banners()
 
+    def _cleanup_images(self):
+        """Clean up image references to free memory."""
+        self._image_refs.clear()
+
     def load_banners(self):
         """Load banner folders from templates/banners/."""
         path = self.templates_path_var.get().strip()
         banners_path = os.path.join(path, "banners")
+
+        # Clean up old image references before destroying widgets
+        self._cleanup_images()
 
         for w in self.banner_grid.winfo_children():
             w.destroy()
@@ -320,7 +335,7 @@ class GachaTab(ttk.Frame):
                 if os.path.isdir(os.path.join(banners_path, d))
                 and not d.startswith(".")
             ]
-        except Exception:
+        except Exception as e:
             error_frame = tk.Frame(self.banner_grid, bg="#f5f5f5")
             error_frame.pack(fill="both", expand=True, pady=40)
             tk.Label(
@@ -341,7 +356,7 @@ class GachaTab(ttk.Frame):
             ).pack(pady=5)
             tk.Label(
                 error_frame,
-                text=f"Error: {str(e)}",  # type: ignore
+                text=f"Error: {str(e)}",
                 font=("", 9),
                 foreground="red",
                 bg="#f5f5f5",
@@ -421,6 +436,10 @@ class GachaTab(ttk.Frame):
                     # Larger thumbnail for better visibility
                     img.thumbnail((180, 120), Image.Resampling.LANCZOS)
                     photo = ImageTk.PhotoImage(img)
+
+                    # Store reference in centralized list to prevent GC
+                    self._image_refs.append(photo)
+
                     lbl = tk.Label(
                         img_frame,
                         image=photo,
@@ -428,8 +447,10 @@ class GachaTab(ttk.Frame):
                         relief="flat",
                         borderwidth=0,
                     )
-                    lbl.image = photo  # type: ignore
                     lbl.pack()
+
+                    # Close the PIL image to free memory
+                    img.close()
                 except Exception as e:
                     error_lbl = tk.Label(
                         img_frame,
@@ -635,7 +656,7 @@ class GachaTab(ttk.Frame):
         ttk.Button(bf, text="Cancel", command=win.destroy, width=12).pack(side="left")
 
     def _start(self):
-        """Start automation."""
+        """Start automation with cancellation support."""
         if not self.selected_gachas:
             messagebox.showwarning("Warning", "Add at least one banner!")
             return
@@ -650,6 +671,7 @@ class GachaTab(ttk.Frame):
             return
 
         self._set_running(True)
+        self._cancel_event.clear()
 
         def run():
             try:
@@ -657,34 +679,63 @@ class GachaTab(ttk.Frame):
                     "templates_path": self.templates_path_var.get(),
                     "max_scroll_attempts": 10,
                 }
-                automation = GachaAutomation(self.agent, config)
+                automation = GachaAutomation(
+                    self.agent, config, cancel_event=self._cancel_event
+                )
                 success = automation.run(self.selected_gachas)
-                self.after(0, lambda: self._finished(success))
+
+                if not self._cancel_event.is_set():
+                    self.after(0, lambda: self._finished(success))
             except Exception as e:
                 logger.error(f"Error: {e}")
-                self.after(0, lambda: self._finished(False, str(e)))
+                if not self._cancel_event.is_set():
+                    self.after(0, lambda: self._finished(False, str(e)))
 
         threading.Thread(target=run, daemon=True).start()
 
     def _stop(self, skip_confirm: bool = False):
-        """Stop automation.
-        
+        """Stop automation with cancellation event.
+
         Args:
             skip_confirm: If True, skip confirmation dialog (used for keyboard shortcuts)
         """
         if not skip_confirm:
             if not messagebox.askyesno("Confirm", "Stop automation?"):
                 return
-        
+
+        self._cancel_event.set()
         self._set_running(False)
         logger.info("Gacha automation stopped by user")
 
+    @property
+    def is_running(self) -> bool:
+        """Thread-safe getter for running state."""
+        with self._state_lock:
+            return self._is_running
+
+    @is_running.setter
+    def is_running(self, value: bool) -> None:
+        """Thread-safe setter for running state."""
+        with self._state_lock:
+            self._is_running = value
+
     def _set_running(self, running: bool):
-        """Update UI state."""
-        self.is_running = running
+        """Update UI state (thread-safe).
+
+        Must be called from main thread for UI updates.
+        """
+        with self._state_lock:
+            self._is_running = running
+
+        # UI updates must happen on main thread
         self.start_btn.config(state="disabled" if running else "normal")
         self.stop_btn.config(state="normal" if running else "disabled")
         self.status_var.set("Running..." if running else "Ready")
+
+    def destroy(self):
+        """Clean up resources when tab is destroyed."""
+        self._cleanup_images()
+        super().destroy()
 
     def _finished(self, success: bool, error: str = ""):
         """Handle completion."""
@@ -698,7 +749,7 @@ class GachaTab(ttk.Frame):
 
     def _setup_keyboard_shortcuts(self):
         """Setup keyboard shortcuts for quick actions.
-        
+
         Shortcuts:
         - Ctrl+Q: Stop automation
         - ESC: Stop automation (emergency stop)
@@ -707,12 +758,12 @@ class GachaTab(ttk.Frame):
         self.bind_all("<Control-q>", self._handle_stop_shortcut)
         self.bind_all("<Escape>", self._handle_stop_shortcut)
         self.bind_all("<F9>", self._handle_stop_shortcut)
-        
+
         logger.info("Gacha tab: Keyboard shortcuts enabled (Ctrl+Q, ESC, F9 to stop)")
 
     def _handle_stop_shortcut(self, event):
         """Handle keyboard shortcut for stopping automation.
-        
+
         Only triggers if automation is currently running.
         """
         if self.is_running:

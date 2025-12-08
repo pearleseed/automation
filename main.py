@@ -85,7 +85,12 @@ class AutoCPeachGUI(tk.Tk):
         self.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
     def setup_logging(self):
-        """Configure logging with buffered queue handler."""
+        """Configure logging with buffered queue handler and bounded queue."""
+        # Use bounded queue to prevent memory issues during long sessions
+        from gui.utils.logging_utils import MAX_LOG_QUEUE_SIZE
+
+        self.log_queue = queue.Queue(maxsize=MAX_LOG_QUEUE_SIZE)
+
         queue_handler = QueueHandler(self.log_queue, buffer_size=25, flush_interval=0.3)
         formatter = logging.Formatter(
             "%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
@@ -399,13 +404,45 @@ class AutoCPeachGUI(tk.Tk):
         """Start log polling."""
         self.log_viewer.start_polling()
 
+    def cleanup(self):
+        """Clean up application resources before shutdown."""
+        logger.info("Cleaning up application resources...")
+
+        # Stop log polling
+        try:
+            if hasattr(self, "log_viewer"):
+                self.log_viewer.stop_polling()
+        except Exception as e:
+            logger.warning(f"Log viewer cleanup error: {e}")
+
+        # Cleanup agent resources
+        try:
+            if self.agent is not None:
+                self.agent.cleanup()
+        except Exception as e:
+            logger.warning(f"Agent cleanup error: {e}")
+
+        logger.info("Application cleanup complete")
+
 
 def main():
-    """Application entry point."""
-    app = AutoCPeachGUI()
+    """Application entry point with proper cleanup."""
+    app = None
     try:
+        app = AutoCPeachGUI()
         app.mainloop()
+    except KeyboardInterrupt:
+        logger.info("Application interrupted by user")
+    except Exception as e:
+        logger.exception(f"Application error: {e}")
     finally:
+        # Cleanup resources
+        if app is not None:
+            try:
+                app.cleanup()
+            except Exception as e:
+                logger.warning(f"Cleanup error: {e}")
+
         shutdown_thread_manager()
         logger.info("Application shutdown complete")
 

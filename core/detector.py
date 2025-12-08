@@ -15,26 +15,36 @@ from difflib import SequenceMatcher
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
-import cv2
-import numpy as np
+import cv2  # type: ignore
+import numpy as np  # type: ignore
 
 from .agent import Agent
 from .utils import get_logger
 
 logger = get_logger(__name__)
 
-# Conditional YOLO import
-try:
-    import torch
-    from ultralytics import YOLO  # type: ignore
+# YOLO is disabled for faster launch and lighter build
+# To re-enable: set YOLO_DISABLED = False and uncomment ultralytics in requirements.txt
+YOLO_DISABLED = True
 
-    YOLO_AVAILABLE = True
-    logger.info("YOLO available")
-except ImportError:
-    YOLO_AVAILABLE = False
-    YOLO = None  # type: ignore
-    torch = None  # type: ignore
-    logger.warning("YOLO not available. Install: pip install ultralytics torch")
+YOLO_AVAILABLE = False
+YOLO: Any = None
+torch: Any = None
+
+if not YOLO_DISABLED:
+    # Conditional YOLO import
+    try:
+        import torch as _torch  # type: ignore
+        from ultralytics import YOLO as _YOLO  # type: ignore
+
+        torch = _torch
+        YOLO = _YOLO
+        YOLO_AVAILABLE = True
+        logger.info("YOLO available")
+    except ImportError:
+        logger.warning("YOLO not available. Install: pip install ultralytics torch")
+else:
+    logger.info("YOLO disabled (set YOLO_DISABLED = False to enable)")
 
 
 # ==================== DATA CLASSES ====================
@@ -335,17 +345,17 @@ class MoneyExtractor:
     def extract(self, text: str) -> ExtractionResult:
         if not text:
             return ExtractionResult(None, text, 0.0, False)
-        
+
         cleaned = text.strip().translate(self.CLEAN_CHARS)
         numbers = self.NUMBER_PATTERN.findall(cleaned)
-        
+
         if not numbers:
             return ExtractionResult(None, text, 0.0, False)
-        
+
         # Skip leading '1' if followed by another number (likely misread 'x')
         if len(numbers) > 1 and numbers[0] == "1":
             numbers = numbers[1:]
-        
+
         try:
             return ExtractionResult(int("".join(numbers)), text, 0.9, True)
         except ValueError:
@@ -833,9 +843,13 @@ class TemplateMatcher:
                         break
 
                 # Higher threshold for labels (more strict matching)
-                tpl_threshold = 0.9 if category in ("first_clear", "s_rank") else self.threshold
+                tpl_threshold = (
+                    0.9 if category in ("first_clear", "s_rank") else self.threshold
+                )
 
-                templates[name] = TemplateInfo(image=img, threshold=tpl_threshold, category=category)
+                templates[name] = TemplateInfo(
+                    image=img, threshold=tpl_threshold, category=category
+                )
                 logger.debug(f"Loaded: {name} (category={category})")
 
             except Exception as e:
@@ -897,12 +911,21 @@ class TemplateMatcher:
                 for pt in zip(*locs[::-1]):
                     conf = float(res[pt[1], pt[0]])
                     result = DetectionResult(
-                        item=name, quantity=0, x=pt[0], y=pt[1],
-                        x2=pt[0] + w, y2=pt[1] + h, confidence=conf,
+                        item=name,
+                        quantity=0,
+                        x=pt[0],
+                        y=pt[1],
+                        x2=pt[0] + w,
+                        y2=pt[1] + h,
+                        confidence=conf,
                     )
 
                     # Extract quantity for item templates
-                    if extract_quantity and self.ocr_engine and tpl_info.category == "item":
+                    if (
+                        extract_quantity
+                        and self.ocr_engine
+                        and tpl_info.category == "item"
+                    ):
                         result.quantity, result.ocr_text = self._extract_quantity(
                             image, (pt[0], pt[1], pt[0] + w, pt[1] + h)
                         )
@@ -919,7 +942,9 @@ class TemplateMatcher:
         logger.info(f"Template matching: {len(unique)} items detected")
         return unique
 
-    def _extract_quantity(self, image: np.ndarray, bbox: Tuple[int, int, int, int]) -> Tuple[int, str]:
+    def _extract_quantity(
+        self, image: np.ndarray, bbox: Tuple[int, int, int, int]
+    ) -> Tuple[int, str]:
         """Extract quantity from region below item using OCR."""
         x1, y1, x2, y2 = bbox
         img_h, img_w = image.shape[:2]
@@ -936,6 +961,8 @@ class TemplateMatcher:
             return 0, ""
 
         try:
+            if self.ocr_engine is None:
+                return 0, ""
             ocr_result = self.ocr_engine.recognize(roi)
             text = ocr_result.get("text", "") if ocr_result else ""
             numbers = TextProcessor.extract_numbers(text)
@@ -943,7 +970,9 @@ class TemplateMatcher:
         except Exception:
             return 0, ""
 
-    def detect_reward_section(self, image: np.ndarray, section_type: str = "first_clear") -> Dict[str, Any]:
+    def detect_reward_section(
+        self, image: np.ndarray, section_type: str = "first_clear"
+    ) -> Dict[str, Any]:
         """Detect reward section with label and items.
 
         Args:
@@ -956,22 +985,32 @@ class TemplateMatcher:
         result = {"label": None, "items": [], "section_type": section_type}
 
         # Detect label
-        label_templates = [n for n, t in self.templates.items() if t.category == section_type]
+        label_templates = [
+            n for n, t in self.templates.items() if t.category == section_type
+        ]
         if label_templates:
-            labels = self.detect(image, template_names=label_templates, extract_quantity=False)
+            labels = self.detect(
+                image, template_names=label_templates, extract_quantity=False
+            )
             if labels:
                 result["label"] = max(labels, key=lambda x: x.confidence)
 
         # Detect items
-        item_templates = [n for n, t in self.templates.items() if t.category in ("item", "")]
+        item_templates = [
+            n for n, t in self.templates.items() if t.category in ("item", "")
+        ]
         if item_templates:
-            items = self.detect(image, template_names=item_templates, extract_quantity=True)
+            items = self.detect(
+                image, template_names=item_templates, extract_quantity=True
+            )
             # Filter items to the right of label
             if result["label"]:
                 items = [i for i in items if i.x > result["label"].x2]
             result["items"] = items
 
-        logger.info(f"Reward '{section_type}': label={'✓' if result['label'] else '✗'}, items={len(result['items'])}")
+        logger.info(
+            f"Reward '{section_type}': label={'✓' if result['label'] else '✗'}, items={len(result['items'])}"
+        )
         return result
 
     def detect_all_rewards(self, image: np.ndarray) -> Dict[str, Dict[str, Any]]:
@@ -984,13 +1023,17 @@ class TemplateMatcher:
         all_detections = self.detect(image, extract_quantity=True)
 
         # Separate labels and items
-        labels = {"first_clear": None, "s_rank": None}
-        items = []
+        labels: Dict[str, Optional[DetectionResult]] = {
+            "first_clear": None,
+            "s_rank": None,
+        }
+        items: List[DetectionResult] = []
 
         for det in all_detections:
             tpl_info = self.templates.get(det.item)
             if tpl_info and tpl_info.category in labels:
-                if labels[tpl_info.category] is None or det.confidence > labels[tpl_info.category].confidence:
+                existing = labels[tpl_info.category]
+                if existing is None or det.confidence > existing.confidence:
                     labels[tpl_info.category] = det
             else:
                 items.append(det)
@@ -1004,16 +1047,25 @@ class TemplateMatcher:
             section_items = []
             if label:
                 section_items = [
-                    i for i in items
+                    i
+                    for i in items
                     if abs(i.center_y - label.center_y) < y_tolerance and i.x > label.x2
                 ]
-            results[section_type] = {"label": label, "items": section_items, "section_type": section_type}
+            results[section_type] = {
+                "label": label,
+                "items": section_items,
+                "section_type": section_type,
+            }
 
-        logger.info(f"All rewards: first_clear={len(results['first_clear']['items'])}, s_rank={len(results['s_rank']['items'])}")
+        logger.info(
+            f"All rewards: first_clear={len(results['first_clear']['items'])}, s_rank={len(results['s_rank']['items'])}"
+        )
         return results
 
     @staticmethod
-    def _nms_by_item(items: List[DetectionResult], min_distance: int) -> List[DetectionResult]:
+    def _nms_by_item(
+        items: List[DetectionResult], min_distance: int
+    ) -> List[DetectionResult]:
         """Remove duplicate detections using NMS grouped by item name."""
         if not items:
             return []
@@ -1032,7 +1084,8 @@ class TemplateMatcher:
             for item in sorted_items:
                 is_dup = any(
                     (e.x - item.x) ** 2 + (e.y - item.y) ** 2 < min_dist_sq
-                    for e in unique if e.item == item.item
+                    for e in unique
+                    if e.item == item.item
                 )
                 if not is_dup:
                     unique.append(item)

@@ -16,9 +16,12 @@ from ctypes import (
     c_ubyte,
 )
 from threading import Lock
-from typing import Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 from PIL import Image
+
+if TYPE_CHECKING:
+    from ctypes import CDLL
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,7 +30,11 @@ logger = logging.getLogger(__name__)
 # Try local .config/oneocr first, then fall back to home directory
 _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _local_config = os.path.join(_project_root, ".config", "oneocr")
-CONFIG_DIR = _local_config if os.path.isdir(_local_config) else os.path.join(os.path.expanduser("~"), ".config", "oneocr")
+CONFIG_DIR = (
+    _local_config
+    if os.path.isdir(_local_config)
+    else os.path.join(os.path.expanduser("~"), ".config", "oneocr")
+)
 MODEL_NAME = "oneocr.onemodel"
 DLL_NAME = "oneocr.dll"
 MODEL_KEY = b'kj)TGtrK>f]b[Piow.gU+nC@s""""""4'
@@ -129,18 +136,43 @@ def bind_dll_functions(dll, functions):
             raise RuntimeError(f"Missing DLL function: {name}") from e
 
 
-# Initialize DLL once at module level
-try:
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    if hasattr(kernel32, "SetDllDirectoryW"):
-        kernel32.SetDllDirectoryW(CONFIG_DIR)
+# Lazy DLL initialization - only load when needed
+_ocr_dll = None
+_dll_lock = Lock()
 
-    dll_path = os.path.join(CONFIG_DIR, DLL_NAME)
-    ocr_dll = ctypes.WinDLL(dll_path)
-    bind_dll_functions(ocr_dll, DLL_FUNCTIONS)
-except (OSError, RuntimeError) as e:
-    logger.error(f"DLL initialization failed: {e}")
-    sys.exit(f"DLL initialization failed: {e}")
+
+def _get_ocr_dll():
+    """Get the OCR DLL, initializing it lazily on first access.
+
+    Returns:
+        The loaded OCR DLL object.
+
+    Raises:
+        RuntimeError: If DLL initialization fails (e.g., not on Windows).
+    """
+    global _ocr_dll
+    if _ocr_dll is not None:
+        return _ocr_dll
+
+    with _dll_lock:
+        if _ocr_dll is not None:
+            return _ocr_dll
+
+        if sys.platform != "win32":
+            raise RuntimeError("OneOCR is only supported on Windows")
+
+        try:
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            if hasattr(kernel32, "SetDllDirectoryW"):
+                kernel32.SetDllDirectoryW(CONFIG_DIR)
+
+            dll_path = os.path.join(CONFIG_DIR, DLL_NAME)
+            _ocr_dll = ctypes.WinDLL(dll_path)
+            bind_dll_functions(_ocr_dll, DLL_FUNCTIONS)
+            logger.info("OneOCR DLL initialized successfully")
+            return _ocr_dll
+        except (OSError, RuntimeError) as e:
+            raise RuntimeError(f"DLL initialization failed: {e}") from e
 
 
 @contextmanager
@@ -186,9 +218,10 @@ class OcrEngine:
     def __init__(self):
         self._lock = Lock()  # Thread safety
         self._initialized = False
-        self.init_options = None
-        self.pipeline = None
-        self.process_options = None
+        self._ocr_dll: "CDLL" = None  # type: ignore[assignment]
+        self.init_options: Optional[c_int64] = None
+        self.pipeline: Optional[c_int64] = None
+        self.process_options: Optional[c_int64] = None
 
         # Pre-allocate reusable C types to avoid repeated allocations
         self._c_int64_pool = c_int64()
@@ -202,6 +235,7 @@ class OcrEngine:
         self._bgra_buffer = None
 
         try:
+            self._ocr_dll = _get_ocr_dll()
             self._initialize()
             self._initialized = True
         except Exception as e:
@@ -225,14 +259,16 @@ class OcrEngine:
         Explicitly releases process options, pipeline, and initialization
         options to free memory and DLL resources.
         """
+        if self._ocr_dll is None:
+            return
         if self.process_options:
-            ocr_dll.ReleaseOcrProcessOptions(self.process_options)
+            self._ocr_dll.ReleaseOcrProcessOptions(self.process_options)
             self.process_options = None
         if self.pipeline:
-            ocr_dll.ReleaseOcrPipeline(self.pipeline)
+            self._ocr_dll.ReleaseOcrPipeline(self.pipeline)
             self.pipeline = None
         if self.init_options:
-            ocr_dll.ReleaseOcrInitOptions(self.init_options)
+            self._ocr_dll.ReleaseOcrInitOptions(self.init_options)
             self.init_options = None
         self._initialized = False
 
@@ -265,12 +301,12 @@ class OcrEngine:
         """
         init_options = c_int64()
         self._check_dll_result(
-            ocr_dll.CreateOcrInitOptions(byref(init_options)),
+            self._ocr_dll.CreateOcrInitOptions(byref(init_options)),
             "Init options creation failed",
         )
 
         self._check_dll_result(
-            ocr_dll.OcrInitOptionsSetUseModelDelayLoad(init_options, 0),
+            self._ocr_dll.OcrInitOptionsSetUseModelDelayLoad(init_options, 0),
             "Model loading config failed",
         )
         return init_options
@@ -291,7 +327,7 @@ class OcrEngine:
         pipeline = c_int64()
         with suppress_output():
             self._check_dll_result(
-                ocr_dll.CreateOcrPipeline(
+                self._ocr_dll.CreateOcrPipeline(
                     model_buf, key_buf, self.init_options, byref(pipeline)
                 ),
                 "Pipeline creation failed",
@@ -309,12 +345,14 @@ class OcrEngine:
         """
         process_options = c_int64()
         self._check_dll_result(
-            ocr_dll.CreateOcrProcessOptions(byref(process_options)),
+            self._ocr_dll.CreateOcrProcessOptions(byref(process_options)),
             "Process options creation failed",
         )
 
         self._check_dll_result(
-            ocr_dll.OcrProcessOptionsSetMaxRecognitionLineCount(process_options, 1000),
+            self._ocr_dll.OcrProcessOptionsSetMaxRecognitionLineCount(
+                process_options, 1000
+            ),
             "Line count config failed",
         )
         return process_options
@@ -415,7 +453,7 @@ class OcrEngine:
 
         if self._cv2_module is None:
             try:
-                import cv2
+                import cv2  # type: ignore[import-untyped]
 
                 self._cv2_module = cv2
             except ImportError:
@@ -423,7 +461,7 @@ class OcrEngine:
 
         cv2 = self._cv2_module
 
-        img = cv2.imdecode(image_buffer, cv2.IMREAD_UNCHANGED)
+        img = cv2.imdecode(image_buffer, cv2.IMREAD_UNCHANGED)  # type: ignore[attr-defined]
         if img is None:
             return self._error_result("Failed to decode image")
 
@@ -434,9 +472,9 @@ class OcrEngine:
 
         channels = img.shape[2] if img.ndim == 3 else 1
         if channels == 1:
-            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGRA)
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGRA)  # type: ignore[attr-defined]
         elif channels == 3:
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)  # type: ignore[attr-defined]
 
         with self._lock:  # Thread safety
             return self._process_image(
@@ -486,7 +524,7 @@ class OcrEngine:
             Parsed OCR results dictionary.
         """
         ocr_result = c_int64()
-        result_code = ocr_dll.RunOcrPipeline(
+        result_code = self._ocr_dll.RunOcrPipeline(
             self.pipeline,
             byref(image_struct),
             self.process_options,
@@ -500,7 +538,7 @@ class OcrEngine:
         try:
             parsed_result = self._parse_ocr_results(ocr_result)
         finally:
-            ocr_dll.ReleaseOcrResult(ocr_result)
+            self._ocr_dll.ReleaseOcrResult(ocr_result)
 
         return parsed_result
 
@@ -513,7 +551,7 @@ class OcrEngine:
         Returns:
             Formatted dictionary with text, angle, and line information.
         """
-        if ocr_dll.GetOcrLineCount(ocr_result, byref(self._c_int64_pool)) != 0:
+        if self._ocr_dll.GetOcrLineCount(ocr_result, byref(self._c_int64_pool)) != 0:
             return copy.deepcopy(self._EMPTY_RESULT)
 
         line_count = self._c_int64_pool.value
@@ -548,7 +586,7 @@ class OcrEngine:
         Returns:
             Text angle in degrees, or None if unavailable.
         """
-        if ocr_dll.GetImageAngle(ocr_result, byref(self._c_float_pool)) != 0:
+        if self._ocr_dll.GetImageAngle(ocr_result, byref(self._c_float_pool)) != 0:
             return None
         return self._c_float_pool.value
 
@@ -579,13 +617,13 @@ class OcrEngine:
             Dictionary with text, bounding_rect, and words.
         """
         line_handle = c_int64()
-        if ocr_dll.GetOcrLine(ocr_result, line_index, byref(line_handle)) != 0:
+        if self._ocr_dll.GetOcrLine(ocr_result, line_index, byref(line_handle)) != 0:
             return {"text": None, "bounding_rect": None, "words": []}
 
         return {
-            "text": self._get_text(line_handle, ocr_dll.GetOcrLineContent),
+            "text": self._get_text(line_handle, self._ocr_dll.GetOcrLineContent),
             "bounding_rect": self._get_bounding_box(
-                line_handle, ocr_dll.GetOcrLineBoundingBox
+                line_handle, self._ocr_dll.GetOcrLineBoundingBox
             ),
             "words": self._get_words(line_handle),
         }
@@ -599,7 +637,10 @@ class OcrEngine:
         Returns:
             List of word dictionaries.
         """
-        if ocr_dll.GetOcrLineWordCount(line_handle, byref(self._c_int64_pool)) != 0:
+        if (
+            self._ocr_dll.GetOcrLineWordCount(line_handle, byref(self._c_int64_pool))
+            != 0
+        ):
             return []
 
         word_count = self._c_int64_pool.value
@@ -623,13 +664,13 @@ class OcrEngine:
             Dictionary with text, bounding_rect, and confidence.
         """
         word_handle = c_int64()
-        if ocr_dll.GetOcrWord(line_handle, word_index, byref(word_handle)) != 0:
+        if self._ocr_dll.GetOcrWord(line_handle, word_index, byref(word_handle)) != 0:
             return {"text": None, "bounding_rect": None, "confidence": None}
 
         return {
-            "text": self._get_text(word_handle, ocr_dll.GetOcrWordContent),
+            "text": self._get_text(word_handle, self._ocr_dll.GetOcrWordContent),
             "bounding_rect": self._get_bounding_box(
-                word_handle, ocr_dll.GetOcrWordBoundingBox
+                word_handle, self._ocr_dll.GetOcrWordBoundingBox
             ),
             "confidence": self._get_word_confidence(word_handle),
         }
@@ -691,7 +732,10 @@ class OcrEngine:
         Returns:
             Confidence score (0.0-1.0), or None if unavailable.
         """
-        if ocr_dll.GetOcrWordConfidence(word_handle, byref(self._c_float_pool)) == 0:
+        if (
+            self._ocr_dll.GetOcrWordConfidence(word_handle, byref(self._c_float_pool))
+            == 0
+        ):
             return self._c_float_pool.value
         return None
 
@@ -746,10 +790,10 @@ def serve(host: str = "0.0.0.0", port: int = 8001, workers: int = 1):
     """
     from io import BytesIO
 
-    import uvicorn
-    from fastapi import FastAPI, HTTPException, Request
-    from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import JSONResponse
+    import uvicorn  # type: ignore[import-untyped]
+    from fastapi import FastAPI, HTTPException, Request  # type: ignore[import-untyped]
+    from fastapi.middleware.cors import CORSMiddleware  # type: ignore[import-untyped]
+    from fastapi.responses import JSONResponse  # type: ignore[import-untyped]
 
     app = FastAPI(
         title="OneOCR Service",

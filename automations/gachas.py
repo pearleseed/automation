@@ -25,7 +25,7 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-import cv2
+import cv2  # type: ignore[import-untyped]
 import numpy as np
 from airtest.core.api import Template, exists, sleep
 
@@ -124,7 +124,9 @@ class GachaAutomation(BaseAutomation):
         if screenshot is not None:
             roi_image = self.crop_roi(screenshot, roi_name)
             if roi_image is not None:
-                found, confidence = match_template_in_image(roi_image, banner_template, threshold)
+                found, confidence = match_template_in_image(
+                    roi_image, banner_template, threshold
+                )
                 if found:
                     logger.info(f"Banner found in ROI (confidence: {confidence:.2f})")
                     return True
@@ -144,12 +146,18 @@ class GachaAutomation(BaseAutomation):
             if roi_image is None:
                 continue
 
-            found, confidence = match_template_in_image(roi_image, banner_template, threshold)
+            found, confidence = match_template_in_image(
+                roi_image, banner_template, threshold
+            )
             if found:
-                logger.info(f"Banner found after {attempt} scroll(s) (confidence: {confidence:.2f})")
+                logger.info(
+                    f"Banner found after {attempt} scroll(s) (confidence: {confidence:.2f})"
+                )
                 return True
 
-        logger.error(f"Banner not found in ROI after {self.max_scroll_attempts} scrolls")
+        logger.error(
+            f"Banner not found in ROI after {self.max_scroll_attempts} scrolls"
+        )
         return False
 
     def check_result(

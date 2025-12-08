@@ -1,5 +1,8 @@
 """
-Logging System for GUI
+Logging System for GUI.
+
+Provides buffered logging with bounded queues to prevent memory issues
+during long-running automation sessions.
 """
 
 import logging
@@ -14,18 +17,39 @@ from core.utils import get_logger
 
 logger = get_logger(__name__)
 
+# Maximum queue size to prevent unbounded memory growth
+MAX_LOG_QUEUE_SIZE = 10000
+
 
 class QueueHandler(logging.Handler):
-    """Logging handler with buffering and batch processing."""
+    """Logging handler with buffering, batch processing, and bounded queue.
 
-    def __init__(self, log_queue, buffer_size=50, flush_interval=0.5):
+    This handler buffers log records and flushes them in batches to improve
+    performance. Uses a bounded queue to prevent memory issues during
+    long-running sessions.
+
+    Attributes:
+        log_queue: Queue to send log entries to.
+        buffer_size: Number of entries to buffer before flushing.
+        flush_interval: Maximum time between flushes in seconds.
+        dropped_count: Number of log entries dropped due to full queue.
+    """
+
+    def __init__(
+        self,
+        log_queue: queue.Queue,
+        buffer_size: int = 50,
+        flush_interval: float = 0.5,
+    ):
         super().__init__()
         self.log_queue = log_queue
-        self.buffer = []
+        self.buffer: list = []
         self.buffer_size = buffer_size
         self.flush_interval = flush_interval
         self.last_flush = time.time()
         self.buffer_lock = threading.Lock()
+        self.dropped_count = 0
+        self._drop_warning_threshold = 100
 
     def emit(self, record):
         """Buffer log records and flush in batches."""
@@ -43,22 +67,30 @@ class QueueHandler(logging.Handler):
                 self._flush_buffer()
 
     def _flush_buffer(self):
-        """Flush buffered log entries to queue."""
-        if self.buffer:
-            # Join multiple entries for efficiency
-            batch_entry = "\n".join(self.buffer)
-            try:
-                self.log_queue.put_nowait(batch_entry)
-            except queue.Full:
-                # If queue is full, put individual entries
-                for entry in self.buffer:
-                    try:
-                        self.log_queue.put_nowait(entry)
-                    except queue.Full:
-                        break  # Stop trying if queue remains full
+        """Flush buffered log entries to queue with overflow handling."""
+        if not self.buffer:
+            return
 
-            self.buffer.clear()
-            self.last_flush = time.time()
+        # Join multiple entries for efficiency
+        batch_entry = "\n".join(self.buffer)
+        try:
+            self.log_queue.put_nowait(batch_entry)
+        except queue.Full:
+            # Queue is full - drop oldest entries and track
+            self.dropped_count += len(self.buffer)
+
+            # Log warning periodically about dropped entries
+            if self.dropped_count >= self._drop_warning_threshold:
+                # Try to put a warning message
+                try:
+                    warning_msg = f"[WARNING] Log queue full - {self.dropped_count} entries dropped"
+                    self.log_queue.put_nowait(warning_msg)
+                    self._drop_warning_threshold = self.dropped_count + 100
+                except queue.Full:
+                    pass
+
+        self.buffer.clear()
+        self.last_flush = time.time()
 
     def flush(self):
         """Force flush remaining buffer."""

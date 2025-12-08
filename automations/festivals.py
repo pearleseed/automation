@@ -146,6 +146,8 @@ class FestivalAutomation(BaseAutomation):
     def _manage_resume_state(self, action: str, **kwargs) -> Optional[Dict[str, Any]]:
         """Manage resume state: load, save, complete, or clear.
 
+        Uses atomic write (temp file + rename) to prevent corruption.
+
         Args:
             action: 'load', 'save', 'complete', or 'clear'
             **kwargs: For 'save': data_path, output_path, use_detector, current_stage, total_stages
@@ -177,8 +179,7 @@ class FestivalAutomation(BaseAutomation):
                     "timestamp": datetime.now().isoformat(),
                     "status": "in_progress",
                 }
-                with open(self.resume_state_file, "w", encoding="utf-8-sig") as f:
-                    json.dump(state, f, indent=2, ensure_ascii=False)
+                self._atomic_write_json(self.resume_state_file, state)
                 logger.debug(
                     f"Resume saved: {kwargs['current_stage']}/{kwargs['total_stages']}"
                 )
@@ -189,8 +190,7 @@ class FestivalAutomation(BaseAutomation):
                         state = json.load(f)
                     state["status"] = "completed"
                     state["completed_at"] = datetime.now().isoformat()
-                    with open(self.resume_state_file, "w", encoding="utf-8-sig") as f:
-                        json.dump(state, f, indent=2, ensure_ascii=False)
+                    self._atomic_write_json(self.resume_state_file, state)
                     logger.debug("Resume completed")
 
             elif action == "clear":
@@ -203,6 +203,35 @@ class FestivalAutomation(BaseAutomation):
         except Exception as e:
             logger.warning(f"Resume state {action} failed: {e}")
             return None
+
+    def _atomic_write_json(self, file_path: str, data: Dict[str, Any]) -> bool:
+        """Write JSON file atomically using temp file and rename.
+
+        Args:
+            file_path: Target file path.
+            data: Dictionary to write as JSON.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        import tempfile
+
+        directory = os.path.dirname(file_path) or "."
+        ensure_directory(directory)
+
+        fd, temp_path = tempfile.mkstemp(dir=directory, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8-sig") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            os.replace(temp_path, file_path)
+            return True
+        except Exception as e:
+            logger.error(f"Atomic write failed: {e}")
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            return False
 
     def detect_roi(
         self,
@@ -266,8 +295,11 @@ class FestivalAutomation(BaseAutomation):
                 roi_image = self.crop_roi(screenshot, roi_name)
                 if roi_image is None:
                     results[roi_name] = {
-                        "roi_name": roi_name, "text": "", "detected": False,
-                        "detections": [], "detection_count": 0,
+                        "roi_name": roi_name,
+                        "text": "",
+                        "detected": False,
+                        "detections": [],
+                        "detection_count": 0,
                     }
                     continue
 
@@ -282,9 +314,15 @@ class FestivalAutomation(BaseAutomation):
                         pass
 
                 # Use reward section detection for reward ROIs
-                if roi_name in reward_roi_map and self.detector and hasattr(self.detector, "detect_reward_section"):
+                if (
+                    roi_name in reward_roi_map
+                    and self.detector
+                    and hasattr(self.detector, "detect_reward_section")
+                ):
                     section_type = reward_roi_map[roi_name]
-                    reward_data = self.detector.detect_reward_section(roi_image, section_type=section_type)
+                    reward_data = self.detector.detect_reward_section(
+                        roi_image, section_type=section_type
+                    )
                     items = reward_data.get("items", [])
                     results[roi_name] = {
                         "roi_name": roi_name,
@@ -294,7 +332,11 @@ class FestivalAutomation(BaseAutomation):
                         "detection_count": len(items),
                         "label": reward_data.get("label"),
                         "items_with_quantity": [
-                            {"item": d.item, "quantity": d.quantity, "confidence": d.confidence}
+                            {
+                                "item": d.item,
+                                "quantity": d.quantity,
+                                "confidence": d.confidence,
+                            }
                             for d in items
                         ],
                     }
@@ -309,8 +351,11 @@ class FestivalAutomation(BaseAutomation):
                     }
                 else:
                     results[roi_name] = {
-                        "roi_name": roi_name, "text": text, "detected": False,
-                        "detections": [], "detection_count": 0,
+                        "roi_name": roi_name,
+                        "text": text,
+                        "detected": False,
+                        "detections": [],
+                        "detection_count": 0,
                     }
 
             logger.info(f"Scanned {len(results)} ROIs (OCR + detector)")
@@ -372,7 +417,11 @@ class FestivalAutomation(BaseAutomation):
                 # Handle both DetectionResult dataclass and dict
                 if detections:
                     first_det = detections[0]
-                    quantity = first_det.quantity if hasattr(first_det, "quantity") else first_det.get("quantity", 0)
+                    quantity = (
+                        first_det.quantity
+                        if hasattr(first_det, "quantity")
+                        else first_det.get("quantity", 0)
+                    )
                 else:
                     quantity = 0
                 has_quantity = quantity > 0

@@ -1,6 +1,8 @@
 """
-Base Tab Class for Automation Tabs
-Eliminates code duplication across Festival/Gacha/Hopping tabs
+Base Tab Class for Automation Tabs.
+
+Eliminates code duplication across Festival/Gacha/Hopping tabs.
+Provides thread-safe state management and common UI components.
 """
 
 import os
@@ -12,7 +14,7 @@ from typing import Any, Dict, Optional
 
 from core.agent import Agent
 from core.config import DEFAULT_PATHS
-from core.utils import get_logger
+from core.utils import get_logger, validate_file_path
 from gui.components.progress_panel import ProgressPanel
 from gui.components.quick_actions_panel import QuickActionsPanel
 from gui.utils.thread_utils import get_thread_manager
@@ -27,6 +29,11 @@ class BaseAutomationTab(ttk.Frame):
     This class provides common UI components and functionality shared across
     Festival, Gacha, and Hopping automation tabs, including file selection,
     configuration, progress tracking, and quick actions.
+
+    Thread Safety:
+        - Uses _state_lock (RLock) for protecting is_running and automation_instance
+        - Uses thread_cancel_event for safe cancellation
+        - All state access goes through thread-safe properties/methods
     """
 
     def __init__(self, parent, agent: Agent, tab_name: str, automation_class: Any):
@@ -34,8 +41,9 @@ class BaseAutomationTab(ttk.Frame):
         self.agent = agent
         self.tab_name = tab_name
         self.automation_class = automation_class
-        self.automation_instance: Optional[Any] = None
-        self.is_running = False
+        self._automation_instance: Optional[Any] = None  # Protected by _state_lock
+        self._is_running = False  # Protected by _state_lock
+        self._state_lock = threading.RLock()  # Use RLock for nested locking
         self.task_id = f"{tab_name.lower()}_automation_{id(self)}"
         self.thread_manager = get_thread_manager()
         self.thread_cancel_event = threading.Event()
@@ -84,7 +92,7 @@ class BaseAutomationTab(ttk.Frame):
 
         self._setup_left_column(left_frame)
         self._setup_right_column(right_frame)
-        
+
         # Setup keyboard shortcuts for stopping automation
         self._setup_keyboard_shortcuts()
 
@@ -245,17 +253,12 @@ class BaseAutomationTab(ttk.Frame):
             justify="left",
         )
         status_label.pack(fill="x")
-        
+
         # Keyboard shortcuts hint
         shortcuts_frame = ttk.LabelFrame(parent, text="Keyboard Shortcuts", padding=8)
         shortcuts_frame.pack(fill="x", pady=5)
-        
-        shortcuts_text = (
-            "Stop Automation:\n"
-            "• Ctrl+Q\n"
-            "• ESC (Emergency)\n"
-            "• F9"
-        )
+
+        shortcuts_text = "Stop Automation:\n" "• Ctrl+Q\n" "• ESC (Emergency)\n" "• F9"
         ttk.Label(
             shortcuts_frame,
             text=shortcuts_text,
@@ -975,17 +978,23 @@ class BaseAutomationTab(ttk.Frame):
         return config
 
     def start_automation(self):
-        """Start automation process."""
+        """Start automation process with input validation."""
         if not self.agent.is_device_connected():
             messagebox.showerror(
                 "Error", "Device not connected!\nPlease connect device first."
             )
             return
 
-        file_path = self.file_path_var.get()
-        if file_path and not os.path.exists(file_path):
-            messagebox.showerror("Error", f"File not found: {file_path}")
-            return
+        file_path = self.file_path_var.get().strip()
+
+        # Validate file path
+        if file_path:
+            if not validate_file_path(file_path, allow_absolute=True):
+                messagebox.showerror("Error", f"Invalid file path: {file_path}")
+                return
+            if not os.path.exists(file_path):
+                messagebox.showerror("Error", f"File not found: {file_path}")
+                return
 
         self._set_running_state(True)
         config = self.get_config()
@@ -998,24 +1007,30 @@ class BaseAutomationTab(ttk.Frame):
             self._automation_finished(False, "Failed to start")
 
     def _run_automation(self, file_path: str, config: Dict[str, Any]):
-        """Execute automation in background thread."""
+        """Execute automation in background thread (thread-safe)."""
         try:
             if self.thread_cancel_event.is_set():
                 logger.info(f"{self.tab_name} automation cancelled before start")
                 return False
 
-            # Initialize automation instance with cancellation event
-            self.automation_instance = self.automation_class(
-                self.agent, config, cancel_event=self.thread_cancel_event
-            )
+            # Initialize automation instance with cancellation event (thread-safe)
+            with self._state_lock:
+                self._automation_instance = self.automation_class(
+                    self.agent, config, cancel_event=self.thread_cancel_event
+                )
 
-            # Verify instance was created
-            if self.automation_instance is None:
-                logger.error(f"Failed to create {self.tab_name} automation instance")
-                return False
+                # Verify instance was created
+                if self._automation_instance is None:
+                    logger.error(
+                        f"Failed to create {self.tab_name} automation instance"
+                    )
+                    return False
 
-            # Run automation
-            success = self.automation_instance.run(file_path)
+                # Get reference while holding lock
+                automation = self._automation_instance
+
+            # Run automation (outside lock to allow cancellation)
+            success = automation.run(file_path)
 
             if not self.thread_cancel_event.is_set():
                 self.after(0, lambda: self._automation_finished(success))
@@ -1043,8 +1058,20 @@ class BaseAutomationTab(ttk.Frame):
                 msg += f"\n\n{error_msg}"
             messagebox.showerror("Error", msg)
 
+    @property
+    def is_running(self) -> bool:
+        """Thread-safe getter for running state."""
+        with self._state_lock:
+            return self._is_running
+
+    @is_running.setter
+    def is_running(self, value: bool) -> None:
+        """Thread-safe setter for running state."""
+        with self._state_lock:
+            self._is_running = value
+
     def _set_running_state(self, running: bool):
-        """Update UI state for running/stopped."""
+        """Update UI state for running/stopped (thread-safe)."""
         self.is_running = running
         self.start_button.config(state="disabled" if running else "normal")
         self.stop_button.config(state="normal" if running else "disabled")
@@ -1053,7 +1080,7 @@ class BaseAutomationTab(ttk.Frame):
 
     def stop_automation(self, skip_confirm: bool = False):
         """Stop running automation.
-        
+
         Args:
             skip_confirm: If True, skip confirmation dialog (used for keyboard shortcuts)
         """
@@ -1073,9 +1100,22 @@ class BaseAutomationTab(ttk.Frame):
 
         self._cleanup_automation()
 
+    @property
+    def automation_instance(self) -> Optional[Any]:
+        """Thread-safe getter for automation instance."""
+        with self._state_lock:
+            return self._automation_instance
+
+    @automation_instance.setter
+    def automation_instance(self, value: Optional[Any]) -> None:
+        """Thread-safe setter for automation instance."""
+        with self._state_lock:
+            self._automation_instance = value
+
     def _cleanup_automation(self):
-        """Clean up automation instance."""
-        self.automation_instance = None
+        """Clean up automation instance (thread-safe)."""
+        with self._state_lock:
+            self._automation_instance = None
 
     def quick_check_device(self):
         """Check device connection status."""
@@ -1101,9 +1141,9 @@ class BaseAutomationTab(ttk.Frame):
 
                 filename = f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
                 filepath = os.path.join(result_dir, filename)
-                import cv2
+                import cv2  # type: ignore[import-untyped]
 
-                cv2.imwrite(filepath, screenshot)
+                cv2.imwrite(filepath, screenshot)  # type: ignore[attr-defined]
                 messagebox.showinfo("Success", f"Screenshot saved:\n{filepath}")
                 logger.info(f"Screenshot saved: {filepath}")
             else:
@@ -1170,7 +1210,7 @@ class BaseAutomationTab(ttk.Frame):
 
     def _setup_keyboard_shortcuts(self):
         """Setup keyboard shortcuts for quick actions.
-        
+
         Shortcuts:
         - Ctrl+Q: Stop automation
         - ESC: Stop automation (emergency stop)
@@ -1180,12 +1220,14 @@ class BaseAutomationTab(ttk.Frame):
         self.bind_all("<Control-q>", self._handle_stop_shortcut)
         self.bind_all("<Escape>", self._handle_stop_shortcut)
         self.bind_all("<F9>", self._handle_stop_shortcut)
-        
-        logger.info(f"{self.tab_name} tab: Keyboard shortcuts enabled (Ctrl+Q, ESC, F9 to stop)")
+
+        logger.info(
+            f"{self.tab_name} tab: Keyboard shortcuts enabled (Ctrl+Q, ESC, F9 to stop)"
+        )
 
     def _handle_stop_shortcut(self, event):
         """Handle keyboard shortcut for stopping automation.
-        
+
         Only triggers if automation is currently running in this tab.
         """
         # Only stop if this automation is running
