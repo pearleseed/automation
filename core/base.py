@@ -165,10 +165,14 @@ class BaseAutomation:
         config: Dict[str, Any],
         roi_config_dict: Dict[str, list],
         cancel_event=None,
+        pause_event=None,
+        preview_callback: Optional[Callable] = None,
     ):
         self.agent = agent
         self.roi_config_dict = roi_config_dict
         self.cancel_event = cancel_event
+        self.pause_event = pause_event  # For pause/resume support
+        self.preview_callback = preview_callback  # For live preview updates
         self.templates_path = config["templates_path"]
         self.snapshot_dir = config["snapshot_dir"]
         self.results_dir = config["results_dir"]
@@ -180,8 +184,25 @@ class BaseAutomation:
         """Check if cancellation was requested."""
         return self.cancel_event is not None and self.cancel_event.is_set()
 
+    def wait_if_paused(self, context: str = "") -> None:
+        """Wait if automation is paused, checking for cancellation periodically.
+        
+        Args:
+            context: Description of current operation for logging.
+        """
+        if self.pause_event is None:
+            return
+        
+        # Wait for pause_event to be set (not paused)
+        while not self.pause_event.is_set():
+            # Check for cancellation while paused
+            if self.is_cancelled():
+                raise CancellationError(context=context)
+            # Wait with timeout to allow periodic cancellation check
+            self.pause_event.wait(timeout=0.5)
+
     def check_cancelled(self, context: str = "") -> None:
-        """Check cancellation and raise CancellationError if cancelled.
+        """Check cancellation and pause state, raise CancellationError if cancelled.
 
         Args:
             context: Description of current operation for logging.
@@ -189,6 +210,10 @@ class BaseAutomation:
         Raises:
             CancellationError: If cancellation was requested.
         """
+        # First check for pause
+        self.wait_if_paused(context)
+        
+        # Then check for cancellation
         if self.is_cancelled():
             logger.info(
                 f"Cancellation requested during {context}"
@@ -196,6 +221,20 @@ class BaseAutomation:
                 else "Cancellation requested"
             )
             raise CancellationError(context=context)
+
+    def update_preview(self, screenshot=None, ocr_text: str = "", confidence: float = 0.0):
+        """Update live preview if callback is set (thread-safe).
+        
+        Args:
+            screenshot: Screenshot image array.
+            ocr_text: OCR result text.
+            confidence: OCR confidence score (0.0-1.0).
+        """
+        if self.preview_callback:
+            try:
+                self.preview_callback(screenshot, ocr_text, confidence)
+            except Exception as e:
+                logger.debug(f"Preview callback error: {e}")
 
     def touch_template(
         self,
@@ -324,6 +363,7 @@ class BaseAutomation:
         """Take screenshot and save to folder with sanitized filenames.
 
         Uses safe_join_path to prevent path traversal attacks.
+        Updates live preview if callback is set.
 
         Args:
             folder_name: Folder name (will be sanitized).
@@ -336,6 +376,9 @@ class BaseAutomation:
             screenshot = self.agent.snapshot()
             if screenshot is None:
                 return None
+
+            # Update live preview
+            self.update_preview(screenshot=screenshot)
 
             # Use safe_join_path to prevent path traversal
             folder_path = safe_join_path(self.snapshot_dir, folder_name)
@@ -386,6 +429,11 @@ class BaseAutomation:
                 return ""
 
             text = self._clean_ocr_text(ocr_result.get("text", "").strip())
+            confidence = ocr_result.get("confidence", 0.8)
+            
+            # Update live preview with OCR result
+            self.update_preview(ocr_text=f"[{roi_name}] {text}", confidence=confidence)
+            
             logger.debug(f"ROI '{roi_name}': '{text}'")
             return text
 

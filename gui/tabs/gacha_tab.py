@@ -36,8 +36,11 @@ class GachaTab(ttk.Frame):
         super().__init__(parent)
         self.agent = agent
         self._is_running = False
+        self._is_paused = False
         self._state_lock = threading.RLock()  # Use RLock for nested locking
         self._cancel_event = threading.Event()
+        self._pause_event = threading.Event()
+        self._pause_event.set()  # Not paused by default
         self.selected_gachas: List[Dict[str, Any]] = []
 
         # Image reference management to prevent memory leaks
@@ -680,7 +683,9 @@ class GachaTab(ttk.Frame):
                     "max_scroll_attempts": 10,
                 }
                 automation = GachaAutomation(
-                    self.agent, config, cancel_event=self._cancel_event
+                    self.agent, config, 
+                    cancel_event=self._cancel_event,
+                    pause_event=self._pause_event,
                 )
                 success = automation.run(self.selected_gachas)
 

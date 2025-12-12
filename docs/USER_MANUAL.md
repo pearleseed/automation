@@ -1,184 +1,283 @@
 # Hướng Dẫn Sử Dụng Auto C-Peach
 
-## Giới Thiệu
+## Mục Lục
 
-Auto C-Peach là công cụ tự động hóa game DOAX Venus Vacation, hỗ trợ:
-- **Festival Automation**: Tự động chơi các màn Festival
-- **Gacha Automation**: Tự động quay gacha
-- **Hopping Automation**: Tự động Pool Hopping
+1. [Giới Thiệu](#giới-thiệu)
+2. [Khởi Động & Kết Nối](#khởi-động--kết-nối)
+3. [Giao Diện Chính](#giao-diện-chính)
+4. [Festival Automation](#tab-festival-automation)
+5. [Gacha Automation](#tab-gacha-automation)
+6. [Hopping Automation](#tab-hopping-automation)
+7. [Settings](#tab-settings)
+8. [Phím Tắt](#phím-tắt)
+9. [Kết Quả & Ảnh Chụp](#kết-quả--ảnh-chụp)
+10. [Xử Lý Sự Cố](#xử-lý-sự-cố)
+11. [FAQ](#faq)
 
 ---
 
-## Khởi Động
+## Giới Thiệu
 
-1. Mở game DOAX Venus Vacation
-2. Chạy Auto C-Peach
-3. Nhấn **"Connect Device"** ở góc trên bên phải
-4. Chờ trạng thái hiển thị **"Device Connected"** (màu xanh)
+Auto C-Peach là công cụ tự động hóa game DOAX Venus Vacation với 3 chức năng chính:
+
+| Chức năng | Mô tả |
+|-----------|-------|
+| **Festival Automation** | Tự động chơi các màn Festival với xác minh OCR |
+| **Gacha Automation** | Tự động quay gacha với nhận diện template |
+| **Hopping Automation** | Tự động Pool Hopping với xác minh item |
+
+---
+
+## Khởi Động & Kết Nối
+
+### Bước 1: Mở Game
+1. Khởi động DOAX Venus Vacation
+2. Đảm bảo cửa sổ game hiển thị đầy đủ (không minimize)
+3. Đặt game ở chế độ Windowed hoặc Borderless
+
+### Bước 2: Chạy Auto C-Peach
+Mở file **Auto C-Peach.exe** để khởi động ứng dụng.
+
+### Bước 3: Kết Nối Device
+1. Nhấn nút **"Connect Device"** ở góc trên bên phải
+2. Chờ trạng thái chuyển sang **"Device Connected"** (màu xanh)
+3. Nếu kết nối thất bại, nhấn **"Refresh"** để thử lại
+
+### Trạng Thái Kết Nối
+
+| Trạng thái | Màu | Ý nghĩa |
+|------------|-----|---------|
+| Not Connected | Đỏ | Chưa kết nối device |
+| Connecting... | Xanh dương | Đang kết nối |
+| Device Connected | Xanh lá | Kết nối thành công |
+| Connection Failed | Đỏ | Kết nối thất bại |
+
+---
+
+## Giao Diện Chính
+
+### Bố Cục Tổng Quan
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Header: Auto C-Peach    [Device Status] [Connect] [Refresh]│
+├─────────────────────────────────────────────────────────────┤
+│  [Festival] [Gacha] [Hopping] [Settings]  ← Tabs            │
+├───────────────────────────────────┬─────────────────────────┤
+│                                   │  Progress Panel         │
+│  Configuration Panel              │  ├─ Progress bar        │
+│  ├─ File Selection                │  └─ Statistics          │
+│  ├─ Automation Settings           │─────────────────────────│
+│  └─ Action Buttons                │  Quick Actions          │
+│      [▶ Start] [⏸ Pause] [⏹ Stop]│  └─ Device/OCR test     │
+│                                   │─────────────────────────│
+│                                   │  Status                 │
+│                                   │  └─ Current status      │
+├───────────────────────────────────┴─────────────────────────┤
+│  Activity Logs                    │  Error History          │
+│  └─ Real-time log display         │  └─ Error tracking      │
+├─────────────────────────────────────────────────────────────┤
+│  Footer: © 2025 Auto C-Peach | Version 1.0        [Status]  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Các Thành Phần UI
+
+#### 1. Pause/Resume Button
+- Nhấn **"⏸ Pause"** để tạm dừng automation
+- Nhấn **"▶ Resume"** để tiếp tục
+- Phím tắt: `Ctrl+P`
+- Hữu ích khi cần can thiệp thủ công giữa chừng
+
+#### 2. Progress Panel
+- **Progress Bar**: Thanh tiến trình với phần trăm
+- **Statistics**: Tổng/Thành công/Thất bại/Bỏ qua
+- **Time Info**: Thời gian đã chạy, ETA, thời gian trung bình
+- **Current Item**: Hiển thị item đang xử lý
+
+#### 3. Toast Notifications
+Thông báo không chặn hiển thị ở góc màn hình:
+- **Info** (xanh dương): Thông tin chung
+- **Success** (xanh lá): Hoàn thành thành công
+- **Warning** (cam): Cảnh báo
+- **Error** (đỏ): Lỗi
+
+#### 4. Error History Panel
+- Hiển thị lịch sử lỗi với timestamp
+- Phân loại theo severity (ERROR/WARNING/INFO)
+- Nút **Clear** để xóa lịch sử
+
+#### 5. Tooltips
+Di chuột vào các nút để xem hướng dẫn:
+- Start: "Start automation (Ctrl+Enter)"
+- Stop: "Stop automation (Ctrl+Q, ESC, F9)"
+- Pause: "Pause/Resume (Ctrl+P)"
+- Browse: "Select data file (CSV/JSON)"
 
 ---
 
 ## Tab Festival Automation
 
+### Tổng Quan
+Festival Automation tự động hóa việc chơi các màn Festival trong game.
+
 ### Cơ Chế Hoạt Động
 
-Tool sẽ tự động thực hiện quy trình sau cho mỗi stage:
-1. Chạm vào nút Event để mở menu Festival
-2. Chụp ảnh màn hình trước khi chọn stage
-3. Sử dụng OCR để tìm và chạm vào tên Festival trong danh sách
-4. Sử dụng OCR để tìm và chạm vào Rank tương ứng
-5. Chụp ảnh màn hình sau khi chọn
-6. Xác minh thông tin hiển thị (điểm, rank, phần thưởng) với dữ liệu CSV
-7. Chạm nút Challenge để bắt đầu trận đấu
-8. Tự động kéo thả object nếu có (mini-game)
-9. Chạm các nút OK, Skip để hoàn thành trận
-10. Chụp ảnh kết quả và xác minh phần thưởng nhận được
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    FESTIVAL AUTOMATION FLOW                  │
+├─────────────────────────────────────────────────────────────┤
+│  1. Touch Event Button                                      │
+│  2. Snapshot Before                                         │
+│  3. OCR Find & Touch Festival Name                          │
+│     └─ Fallback: Use cached position if OCR fails          │
+│  4. OCR Find & Touch Rank                                   │
+│  5. Snapshot After                                          │
+│  6. Pre-Battle Verification (OCR scan)                      │
+│  7. Touch Challenge Button                                  │
+│  8. Optional: Drag & Drop mini-game                         │
+│  9. Touch OK/Skip buttons                                   │
+│ 10. Touch Result Button                                     │
+│ 11. Snapshot Result                                         │
+│ 12. Post-Battle Verification                                │
+│ 13. Close result dialogs                                    │
+│                                                             │
+│  ※ Pause/Resume available at any step                      │
+└─────────────────────────────────────────────────────────────┘
+```
 
-**Tính năng Resume**: Nếu bị gián đoạn (tắt app, lỗi mạng...), tool sẽ tự động lưu tiến trình và cho phép tiếp tục từ stage đang dở khi chạy lại.
+### Tính Năng Đặc Biệt
 
-**Fallback Cache**: Nếu OCR không nhận diện được text (do text quá dài, bị cắt...), tool sẽ sử dụng vị trí đã lưu từ lần chạm thành công trước đó.
+- **Resume**: Tự động lưu tiến trình, có thể tiếp tục nếu bị gián đoạn
+- **Fallback Cache**: Lưu vị trí chạm thành công để dùng khi OCR thất bại
+- **Fuzzy Matching**: So khớp mờ để xử lý OCR sai ký tự
 
-### Chuẩn Bị
-Chuẩn bị file CSV/JSON chứa thông tin các stage Festival cần chạy.
+### Chuẩn Bị File Dữ Liệu
+
+#### Format CSV
+```csv
+フェス名,フェスランク,推奨ランク,勝利点数,Sランクボーダー,初回クリア報酬,Sランク報酬
+Festival Name 1,Rank A,E,1000,5000,Item A,Item B
+```
 
 ### Các Bước Thực Hiện
 
-1. **Chọn File Dữ Liệu**
-   - Nhấn **"Browse"** để chọn file dữ liệu
-   - Nhấn **"Preview"** để xem trước nội dung
-
-2. **Chọn Stage Bắt Đầu**
-   - Chọn stage muốn bắt đầu từ dropdown "Start Stage"
-   - Hiển thị format: `[Rank] Tên Festival - Rank Festival`
-
-3. **Cấu Hình Output** (tùy chọn)
-   - Nhấn **"..."** để chọn nơi lưu kết quả
-   - Bỏ trống để tự động tạo file với timestamp
-
-4. **Tùy Chọn Resume**
-   - Mặc định sẽ tự động tiếp tục session bị gián đoạn
-   - Tick **"Force New Session"** để bắt đầu mới hoàn toàn
-
-5. **Bắt Đầu**
-   - Nhấn **"Start"** để chạy
-   - Nếu có session cũ, sẽ hiện hộp thoại hỏi có muốn tiếp tục không
-   - Theo dõi tiến trình qua Progress Panel
-
-6. **Dừng**
-   - Nhấn **"Stop"** hoặc phím tắt `Ctrl+Q` / `ESC` / `F9`
+1. **Chọn File Dữ Liệu**: Nhấn Browse → Preview để xem trước
+2. **Chọn Stage Bắt Đầu**: Dropdown "Start Stage"
+3. **Tùy Chọn Resume**: Tick "Force New Session" nếu muốn bắt đầu mới
+4. **Bắt Đầu**: Nhấn **"▶ Start Festival"**
+5. **Tạm Dừng**: Nhấn **"⏸ Pause"** hoặc `Ctrl+P`
+6. **Dừng**: Nhấn **"⏹ Stop"** hoặc `Ctrl+Q`/`ESC`/`F9`
 
 ---
 
 ## Tab Gacha Automation
 
+### Tổng Quan
+Gacha Automation tự động hóa việc quay gacha với xác minh kết quả.
+
 ### Cơ Chế Hoạt Động
 
-Tool sẽ tự động thực hiện quy trình sau cho mỗi lần pull:
-1. Tìm banner trong màn hình bằng template matching (so khớp ảnh)
-2. Nếu không thấy, tự động cuộn xuống và tìm tiếp (tối đa 10 lần)
-3. Chạm vào banner để mở
-4. Chọn loại pull (Single hoặc Multi 10x)
-5. Chụp ảnh trước khi pull
-6. Xác nhận pull và chờ animation
-7. Tự động skip animation nếu có thể
-8. Chụp ảnh kết quả
-9. Xác minh kết quả:
-   - Kiểm tra có đúng rarity (SSR/SR) không bằng template matching
-   - Kiểm tra có swimsuit character không bằng template matching
-   - Nếu cả hai đều match → Lưu ảnh đặc biệt đánh dấu "SPECIAL"
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    GACHA AUTOMATION FLOW                     │
+├─────────────────────────────────────────────────────────────┤
+│  1. Find Banner (template matching + auto-scroll)           │
+│  2. Touch Banner to open                                    │
+│  3. Select Pull Type (single/multi)                         │
+│  4. Snapshot Before                                         │
+│  5. Confirm Pull                                            │
+│  6. Wait for animation                                      │
+│  7. Skip Animation (optional)                               │
+│  8. Snapshot After                                          │
+│  9. Result Verification (Rarity + Swimsuit)                 │
+│ 10. Repeat for remaining pulls                              │
+│                                                             │
+│  ※ Pause/Resume available between pulls                    │
+└─────────────────────────────────────────────────────────────┘
+```
 
-**Template Matching**: Tool so sánh ảnh màn hình với các ảnh mẫu trong folder banner để nhận diện. Độ chính xác phụ thuộc vào chất lượng ảnh mẫu.
+### Chuẩn Bị Templates
 
-### Chuẩn Bị
-Tổ chức thư mục templates với các folder banner:
-- Mỗi folder là một banner
-- Chứa ảnh banner chính để nhận diện
-- Chứa các ảnh character swimsuit để xác minh kết quả
+```
+templates/
+└── jp/
+    ├── tpl_event.png, tpl_ok.png, tpl_skip.png
+    ├── tpl_ssr.png, tpl_sr.png
+    └── banners/
+        └── banner_name/
+            ├── banner.png      # Ảnh banner chính
+            └── swimsuit.png    # Ảnh swimsuit để xác minh
+```
 
 ### Các Bước Thực Hiện
 
-1. **Chọn Thư Mục Templates**
-   - Nhấn **"Browse"** để chọn thư mục templates
-   - Nhấn **"Refresh"** để tải danh sách banner
-   - Mỗi banner hiển thị preview và số lượng ảnh trong folder
-
-2. **Cấu Hình Pull**
-   - **Rarity**: Chọn SSR hoặc SR để xác minh kết quả
-   - **Pulls**: Nhập số lần pull (1-100)
-   - **Type**: Chọn Single (1 lần) hoặc Multi (10 lần)
-
-3. **Thêm Banner Vào Queue**
-   - Nhấn **"Add to Queue"** trên banner muốn quay
-   - Nếu folder có nhiều ảnh, chọn ảnh banner chính
-   - Xem tổng số banner và pull trong Queue
-
-4. **Quản Lý Queue**
-   - **Edit**: Chỉnh sửa số pull, type, rarity của banner
-   - **Remove**: Xóa banner khỏi queue
-   - **Clear**: Xóa toàn bộ queue
-
-5. **Bắt Đầu**
-   - Nhấn **"Start Gacha"**
-   - Xác nhận số lượng gacha và pull trong hộp thoại
-
-6. **Dừng**
-   - Nhấn **"Stop"** hoặc phím tắt
+1. **Chọn Thư Mục Templates**: Browse → Refresh
+2. **Cấu Hình Pull**: Rarity, Pulls, Type
+3. **Thêm Banner Vào Queue**: Add to Queue
+4. **Bắt Đầu**: Start Gacha
+5. **Điều Khiển**: Pause/Resume/Stop
 
 ---
 
 ## Tab Hopping Automation
 
+### Tổng Quan
+Hopping Automation tự động hóa Pool Hopping với xác minh item.
+
 ### Cơ Chế Hoạt Động
 
-Tool sẽ tự động thực hiện quy trình sau cho mỗi course:
-1. Chụp ảnh màn hình trước khi sử dụng item
-2. Chạm nút Use để sử dụng item
-3. Chạm OK để xác nhận
-4. Chụp ảnh item nhận được
-5. Sử dụng OCR để đọc tên item và số lượng
-6. So sánh với dữ liệu trong CSV để xác minh đúng/sai
-7. Ghi kết quả vào file output
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   HOPPING AUTOMATION FLOW                    │
+├─────────────────────────────────────────────────────────────┤
+│  1. Snapshot Before                                         │
+│  2. Touch Use Button                                        │
+│  3. Touch OK Button                                         │
+│  4. Snapshot Item                                           │
+│  5. Verification (OCR scan)                                 │
+│  6. Compare with CSV data                                   │
+│  7. Record OK/NG/Draw Unchecked                             │
+│  8. Repeat for remaining courses                            │
+│                                                             │
+│  ※ Pause/Resume available at any step                      │
+└─────────────────────────────────────────────────────────────┘
+```
 
-**Tính năng Resume**: Tương tự Festival, tool lưu tiến trình và cho phép tiếp tục từ course đang dở.
+### Kết Quả Xác Minh
 
-**Xác minh OCR**: Tool đọc text trên màn hình và so sánh với dữ liệu mong đợi trong CSV. Hỗ trợ fuzzy matching (so khớp mờ) để xử lý các trường hợp OCR đọc sai một vài ký tự.
-
-### Chuẩn Bị
-Chuẩn bị file CSV/JSON chứa thông tin các course cần chạy.
+| Kết quả | Ý nghĩa |
+|---------|---------|
+| **OK** | Kết quả đúng, đã xác minh |
+| **NG** | Kết quả sai, đã xác minh |
+| **Draw Unchecked** | Không thể xác minh (OCR thất bại) |
 
 ### Các Bước Thực Hiện
 
-1. **Chọn File Dữ Liệu**
-   - Nhấn **"Browse"** để chọn file
-   - Nhấn **"Preview"** để xem trước
-
-2. **Chọn Course Bắt Đầu**
-   - Chọn course từ dropdown "Start Course"
-
-3. **Cấu Hình Output** (tùy chọn)
-   - Nhấn **"..."** để chọn nơi lưu kết quả
-
-4. **Tùy Chọn Resume**
-   - Tick **"Force New Session"** nếu muốn bắt đầu mới
-
-5. **Bắt Đầu**
-   - Nhấn **"Start"**
-
-6. **Dừng**
-   - Nhấn **"Stop"** hoặc phím tắt
+1. **Chọn File Dữ Liệu**: Browse → Preview
+2. **Chọn Course Bắt Đầu**: Dropdown
+3. **Bắt Đầu**: Start Hopping
+4. **Điều Khiển**: Pause/Resume/Stop
 
 ---
 
 ## Tab Settings
 
-- **Log Level**: Điều chỉnh mức độ chi tiết của log
-  - DEBUG: Hiển thị tất cả thông tin chi tiết
-  - INFO: Thông tin chung (khuyến nghị)
-  - WARNING: Chỉ hiện cảnh báo
-  - ERROR: Chỉ hiện lỗi
+### Log Level
 
-- **Max Log Lines**: Số dòng log tối đa hiển thị (giảm để tăng hiệu suất)
-- **Log Poll Interval**: Tần suất cập nhật log (tăng để giảm tải CPU)
+| Level | Mô tả | Khi nào dùng |
+|-------|-------|--------------|
+| DEBUG | Chi tiết nhất | Debug, tìm lỗi |
+| INFO | Thông tin chung | Sử dụng bình thường |
+| WARNING | Chỉ cảnh báo | Giảm log |
+| ERROR | Chỉ lỗi | Chỉ quan tâm lỗi |
+
+### Performance Settings
+
+| Setting | Mô tả | Giá trị khuyến nghị |
+|---------|-------|---------------------|
+| Max Log Lines | Số dòng log tối đa | 1000 |
+| Log Poll Interval | Tần suất cập nhật log (ms) | 200 |
 
 ---
 
@@ -186,28 +285,72 @@ Chuẩn bị file CSV/JSON chứa thông tin các course cần chạy.
 
 | Phím | Chức Năng |
 |------|-----------|
-| `Ctrl+Q` | Dừng automation |
+| `Ctrl+Q` | Dừng automation (an toàn) |
 | `ESC` | Dừng khẩn cấp |
 | `F9` | Dừng automation |
+| `Ctrl+P` | Pause/Resume |
+| `Ctrl+Enter` | Bắt đầu automation |
 
 ---
 
 ## Kết Quả & Ảnh Chụp
 
-Tất cả kết quả được lưu trong thư mục `result/`:
-- **Snapshots**: Ảnh chụp màn hình tại các bước quan trọng
-- **Results**: File CSV/JSON chứa kết quả xác minh
-- **Logs**: File log chi tiết quá trình chạy
+### Cấu Trúc Thư Mục Result
 
-Mỗi automation có thư mục riêng (festival/, gacha/, hopping/) để dễ quản lý.
+```
+result/
+├── festival/
+│   ├── snapshots/          # Ảnh chụp màn hình
+│   ├── results/            # File kết quả (CSV/JSON/HTML)
+│   ├── logs/               # Log chi tiết
+│   └── .festival_resume.json
+├── gacha/
+│   ├── snapshots/
+│   ├── results/
+│   └── logs/
+└── hopping/
+    ├── snapshots/
+    ├── results/
+    ├── logs/
+    └── .hopping_resume.json
+```
+
+### Output Formats
+
+- **CSV**: Dễ mở bằng Excel
+- **JSON**: Dễ xử lý bằng code
+- **HTML**: Xem trực quan trong browser
 
 ---
 
-## Lưu Ý Quan Trọng
+## Xử Lý Sự Cố
 
-- **Không di chuyển hoặc minimize** cửa sổ game khi đang chạy
-- **Giữ game ở foreground** để tool có thể chụp màn hình và điều khiển
-- Sử dụng **Preview** để kiểm tra dữ liệu trước khi chạy
-- Nếu bị treo, dùng **ESC** để dừng khẩn cấp
-- Kiểm tra **Activity Log** ở cuối màn hình để theo dõi trạng thái và lỗi
-- Có thể kéo thanh phân cách giữa tab và log để điều chỉnh kích thước
+### Lỗi Thường Gặp
+
+| Lỗi | Nguyên nhân | Giải pháp |
+|-----|-------------|-----------|
+| Device not connected | Game chưa mở | Mở game, đặt ở foreground |
+| OCR failed | Text không rõ | Kiểm tra độ phân giải game |
+| Template not found | Ảnh không khớp | Chụp lại template |
+| Connection timeout | Game không phản hồi | Restart game và tool |
+
+### Tips Tối Ưu
+
+1. **Giữ game ở foreground** - Không minimize
+2. **Kiểm tra Error History** - Phát hiện lỗi sớm
+3. **Sử dụng Pause** - Tạm dừng khi cần can thiệp
+
+---
+
+## FAQ
+
+### Q: Khi nào nên dùng Pause?
+A: Khi cần can thiệp thủ công (ví dụ: game hiện popup bất ngờ).
+
+### Q: Làm sao để tiếp tục session bị gián đoạn?
+A: Tool tự động lưu tiến trình. Khi chạy lại, sẽ hỏi có muốn tiếp tục không.
+
+### Q: Dữ liệu có an toàn không?
+A: Tool chỉ đọc file bạn cung cấp và lưu kết quả local. Không gửi dữ liệu ra ngoài.
+
+---

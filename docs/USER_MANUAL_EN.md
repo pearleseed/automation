@@ -1,184 +1,248 @@
 # Auto C-Peach User Manual
 
-## Introduction
+## Table of Contents
 
-Auto C-Peach is an automation tool for DOAX Venus Vacation, supporting:
-- **Festival Automation**: Automatically play Festival stages
-- **Gacha Automation**: Automatically pull gacha
-- **Hopping Automation**: Automatically run Pool Hopping
+1. [Introduction](#introduction)
+2. [Getting Started & Connection](#getting-started--connection)
+3. [Main Interface](#main-interface)
+4. [Festival Automation](#festival-automation-tab)
+5. [Gacha Automation](#gacha-automation-tab)
+6. [Hopping Automation](#hopping-automation-tab)
+7. [Settings](#settings-tab)
+8. [Keyboard Shortcuts](#keyboard-shortcuts)
+9. [Results & Screenshots](#results--screenshots)
+10. [Troubleshooting](#troubleshooting)
+11. [FAQ](#faq)
 
 ---
 
-## Getting Started
+## Introduction
 
-1. Open DOAX Venus Vacation game
-2. Run Auto C-Peach
-3. Click **"Connect Device"** at the top right corner
-4. Wait until status shows **"Device Connected"** (green)
+Auto C-Peach is an automation tool for DOAX Venus Vacation with 3 main functions:
+
+| Feature | Description |
+|---------|-------------|
+| **Festival Automation** | Automatically play Festival stages with OCR verification |
+| **Gacha Automation** | Automatically pull gacha with template recognition |
+| **Hopping Automation** | Automatically run Pool Hopping with item verification |
+
+---
+
+## Getting Started & Connection
+
+### Step 1: Open Game
+1. Launch DOAX Venus Vacation
+2. Ensure the game window is fully visible (not minimized)
+3. Set game to Windowed or Borderless mode
+
+### Step 2: Run Auto C-Peach
+Open **Auto C-Peach.exe** to start the application.
+
+### Step 3: Connect Device
+1. Click **"Connect Device"** button at the top right corner
+2. Wait for status to change to **"Device Connected"** (green)
+3. If connection fails, click **"Refresh"** to retry
+
+### Connection Status
+| Status | Color | Meaning |
+|--------|-------|---------|
+| Not Connected | Red | Device not connected |
+| Connecting... | Blue | Connection in progress |
+| Device Connected | Green | Successfully connected |
+| Connection Failed | Red | Connection failed |
+
+
+---
+
+## Main Interface
+
+### Layout Overview
+
+```
++-------------------------------------------------------------+
+|  Header: Auto C-Peach    [Device Status] [Connect] [Refresh]|
++-------------------------------------------------------------+
+|  [Festival] [Gacha] [Hopping] [Settings]  <- Tabs           |
++-----------------------------------+-------------------------+
+|                                   |  Progress Panel         |
+|  Configuration Panel              |  - Progress bar         |
+|  - File Selection                 |  - Statistics           |
+|  - Automation Settings            |-------------------------|
+|  - Action Buttons                 |  Quick Actions          |
+|      [Start] [Pause] [Stop]       |  - Device/OCR test      |
+|                                   |-------------------------|
+|                                   |  Status                 |
+|                                   |  - Current status       |
++-----------------------------------+-------------------------+
+|  Activity Logs                    |  Error History          |
++-------------------------------------------------------------+
+|  Footer: (c) 2025 Auto C-Peach | Version 1.0      [Status]  |
++-------------------------------------------------------------+
+```
+
+### UI Components
+
+#### 1. Pause/Resume Button
+- Click **"Pause"** to pause automation
+- Click **"Resume"** to continue
+- Shortcut: `Ctrl+P`
+- Useful when manual intervention is needed
+
+#### 2. Progress Panel
+- **Progress Bar**: Progress bar with percentage
+- **Statistics**: Total/Success/Failed/Skipped counts
+- **Time Info**: Elapsed time, ETA, average time per item
+- **Current Item**: Shows item being processed
+
+#### 3. Toast Notifications
+Non-blocking notifications at screen corner:
+- **Info** (blue): General information
+- **Success** (green): Completed successfully
+- **Warning** (orange): Warnings
+- **Error** (red): Errors
+
+#### 4. Error History Panel
+- Displays error history with timestamps
+- Categorized by severity (ERROR/WARNING/INFO)
+- **Clear** button to clear history
+
+#### 5. Tooltips
+Hover over buttons to see guidance.
+
 
 ---
 
 ## Festival Automation Tab
 
-### How It Works
+### Overview
+Festival Automation automates playing Festival stages in the game.
 
-The tool automatically performs the following process for each stage:
-1. Tap the Event button to open Festival menu
-2. Capture screenshot before selecting stage
-3. Use OCR to find and tap the Festival name in the list
-4. Use OCR to find and tap the corresponding Rank
-5. Capture screenshot after selection
-6. Verify displayed information (points, rank, rewards) against CSV data
-7. Tap Challenge button to start the battle
-8. Automatically drag & drop objects if present (mini-game)
-9. Tap OK, Skip buttons to complete the battle
-10. Capture result screenshot and verify received rewards
+### Operation Flow
+1. Touch Event Button
+2. Snapshot Before
+3. OCR Find & Touch Festival Name (with fallback cache)
+4. OCR Find & Touch Rank
+5. Snapshot After
+6. Pre-Battle Verification
+7. Touch Challenge Button
+8. Optional: Drag & Drop mini-game
+9. Touch OK/Skip buttons
+10. Touch Result Button
+11. Snapshot Result
+12. Post-Battle Verification
+13. Close result dialogs
 
-**Resume Feature**: If interrupted (app closed, network error...), the tool automatically saves progress and allows continuing from the current stage when restarted.
+**Note**: Pause/Resume available at any step
 
-**Fallback Cache**: If OCR fails to recognize text (due to long text, truncation...), the tool uses saved positions from previous successful taps.
+### Special Features
+- **Resume**: Auto-saves progress, can continue if interrupted
+- **Fallback Cache**: Saves successful touch positions for OCR failures
+- **Fuzzy Matching**: Handles OCR misreads
 
-### Preparation
-Prepare a CSV/JSON file containing Festival stage information.
+### Data File Format (CSV)
+```csv
+フェス名,フェスランク,推奨ランク,勝利点数,Sランクボーダー,初回クリア報酬,Sランク報酬
+Festival Name 1,Rank A,E,1000,5000,Item A,Item B
+```
 
-### Steps
-
-1. **Select Data File**
-   - Click **"Browse"** to select data file
-   - Click **"Preview"** to view contents
-
-2. **Select Starting Stage**
-   - Choose starting stage from "Start Stage" dropdown
-   - Display format: `[Rank] Festival Name - Festival Rank`
-
-3. **Configure Output** (optional)
-   - Click **"..."** to choose output location
-   - Leave empty for auto-generated file with timestamp
-
-4. **Resume Options**
-   - By default, interrupted sessions will auto-resume
-   - Check **"Force New Session"** to start fresh
-
-5. **Start**
-   - Click **"Start"** to begin
-   - If previous session exists, a dialog will ask whether to continue
-   - Monitor progress via Progress Panel
-
-6. **Stop**
-   - Click **"Stop"** or use hotkeys `Ctrl+Q` / `ESC` / `F9`
+### Steps to Execute
+1. **Select Data File**: Browse → Preview
+2. **Select Starting Stage**: Dropdown
+3. **Resume Options**: Check "Force New Session" to start fresh
+4. **Start**: Click **"Start Festival"**
+5. **Pause**: Click **"Pause"** or `Ctrl+P`
+6. **Stop**: Click **"Stop"** or `Ctrl+Q`/`ESC`/`F9`
 
 ---
 
 ## Gacha Automation Tab
 
-### How It Works
+### Overview
+Gacha Automation automates gacha pulls with result verification.
 
-The tool automatically performs the following process for each pull:
-1. Find banner on screen using template matching (image comparison)
-2. If not found, automatically scroll down and search again (up to 10 times)
-3. Tap the banner to open it
-4. Select pull type (Single or Multi 10x)
-5. Capture screenshot before pulling
-6. Confirm pull and wait for animation
-7. Automatically skip animation if possible
-8. Capture result screenshot
-9. Verify results:
-   - Check if correct rarity (SSR/SR) using template matching
-   - Check for swimsuit character using template matching
-   - If both match -> Save special screenshot marked "SPECIAL"
+### Operation Flow
+1. Find Banner (template matching + auto-scroll)
+2. Touch Banner to open
+3. Select Pull Type (single/multi)
+4. Snapshot Before
+5. Confirm Pull
+6. Wait for animation
+7. Skip Animation (optional)
+8. Snapshot After
+9. Result Verification (Rarity + Swimsuit)
+10. Repeat for remaining pulls
 
-**Template Matching**: The tool compares screen images with sample images in the banner folder for recognition. Accuracy depends on sample image quality.
+**Note**: Pause/Resume available between pulls
 
-### Preparation
-Organize templates folder with banner folders:
-- Each folder represents one banner
-- Contains main banner image for recognition
-- Contains swimsuit character images for result verification
+### Templates Structure
+```
+templates/
+└── jp/
+    ├── tpl_event.png, tpl_ok.png, tpl_skip.png
+    ├── tpl_ssr.png, tpl_sr.png
+    └── banners/
+        └── banner_name/
+            ├── banner.png      # Main banner image
+            └── swimsuit.png    # Swimsuit for verification
+```
 
-### Steps
-
-1. **Select Templates Folder**
-   - Click **"Browse"** to select templates folder
-   - Click **"Refresh"** to reload banner list
-   - Each banner shows preview and image count in folder
-
-2. **Configure Pull Settings**
-   - **Rarity**: Select SSR or SR for result verification
-   - **Pulls**: Enter number of pulls (1-100)
-   - **Type**: Select Single (1 pull) or Multi (10 pulls)
-
+### Steps to Execute
+1. **Select Templates Folder**: Browse → Refresh
+2. **Configure Pull**: Rarity, Pulls, Type
 3. **Add Banners to Queue**
-   - Click **"Add to Queue"** on desired banner
-   - If folder has multiple images, select the main banner image
-   - View total banners and pulls in Queue
+4. **Start**: Start Gacha
+5. **Control**: Pause/Resume/Stop
 
-4. **Manage Queue**
-   - **Edit**: Modify pull count, type, rarity of banner
-   - **Remove**: Remove banner from queue
-   - **Clear**: Clear entire queue
-
-5. **Start**
-   - Click **"Start Gacha"**
-   - Confirm gacha and pull count in dialog
-
-6. **Stop**
-   - Click **"Stop"** or use hotkeys
 
 ---
 
 ## Hopping Automation Tab
 
-### How It Works
+### Overview
+Hopping Automation automates Pool Hopping with item verification.
 
-The tool automatically performs the following process for each course:
-1. Capture screenshot before using item
-2. Tap Use button to use item
-3. Tap OK to confirm
-4. Capture screenshot of received item
-5. Use OCR to read item name and quantity
-6. Compare with CSV data to verify correct/incorrect
-7. Write results to output file
+### Operation Flow
+1. Snapshot Before
+2. Touch Use Button
+3. Touch OK Button
+4. Snapshot Item
+5. Verification (OCR scan)
+6. Compare with CSV data
+7. Record OK/NG/Draw Unchecked
+8. Repeat for remaining courses
 
-**Resume Feature**: Similar to Festival, the tool saves progress and allows continuing from the current course.
+**Note**: Pause/Resume available at any step
 
-**OCR Verification**: The tool reads text on screen and compares with expected data in CSV. Supports fuzzy matching to handle cases where OCR misreads a few characters.
+### Verification Results
+| Result | Meaning |
+|--------|---------|
+| **OK** | Correct result, verified |
+| **NG** | Incorrect result, verified |
+| **Draw Unchecked** | Could not verify (OCR failed) |
 
-### Preparation
-Prepare a CSV/JSON file containing course information.
-
-### Steps
-
-1. **Select Data File**
-   - Click **"Browse"** to select file
-   - Click **"Preview"** to view contents
-
-2. **Select Starting Course**
-   - Choose course from "Start Course" dropdown
-
-3. **Configure Output** (optional)
-   - Click **"..."** to choose output location
-
-4. **Resume Options**
-   - Check **"Force New Session"** to start fresh
-
-5. **Start**
-   - Click **"Start"**
-
-6. **Stop**
-   - Click **"Stop"** or use hotkeys
+### Steps to Execute
+1. **Select Data File**: Browse → Preview
+2. **Select Starting Course**: Dropdown
+3. **Start**: Start Hopping
+4. **Control**: Pause/Resume/Stop
 
 ---
 
 ## Settings Tab
 
-- **Log Level**: Adjust log detail level
-  - DEBUG: Show all detailed information
-  - INFO: General information (recommended)
-  - WARNING: Show warnings only
-  - ERROR: Show errors only
+### Log Level
+| Level | Description | When to Use |
+|-------|-------------|-------------|
+| DEBUG | Most detailed | Debugging, finding errors |
+| INFO | General information | Normal use |
+| WARNING | Warnings only | Reduce log output |
+| ERROR | Errors only | Only concerned with errors |
 
-- **Max Log Lines**: Maximum log lines displayed (reduce for better performance)
-- **Log Poll Interval**: Log update frequency (increase to reduce CPU load)
+### Performance Settings
+| Setting | Description | Recommended |
+|---------|-------------|-------------|
+| Max Log Lines | Maximum log lines | 1000 |
+| Log Poll Interval | Update frequency (ms) | 200 |
 
 ---
 
@@ -186,28 +250,68 @@ Prepare a CSV/JSON file containing course information.
 
 | Key | Function |
 |-----|----------|
-| `Ctrl+Q` | Stop automation |
+| `Ctrl+Q` | Stop automation (safe) |
 | `ESC` | Emergency stop |
 | `F9` | Stop automation |
+| `Ctrl+P` | Pause/Resume |
+| `Ctrl+Enter` | Start automation |
 
 ---
 
 ## Results & Screenshots
 
-All results are saved in the `result/` folder:
-- **Snapshots**: Screenshots captured at important steps
-- **Results**: CSV/JSON files containing verification results
-- **Logs**: Detailed log files of the running process
+### Result Directory Structure
+```
+result/
+├── festival/
+│   ├── snapshots/          # Screenshots
+│   ├── results/            # Result files (CSV/JSON/HTML)
+│   ├── logs/               # Detailed logs
+│   └── .festival_resume.json
+├── gacha/
+│   ├── snapshots/
+│   ├── results/
+│   └── logs/
+└── hopping/
+    ├── snapshots/
+    ├── results/
+    ├── logs/
+    └── .hopping_resume.json
+```
 
-Each automation has its own folder (festival/, gacha/, hopping/) for easy management.
+### Output Formats
+- **CSV**: Easy to open with Excel
+- **JSON**: Easy to process with code
+- **HTML**: Visual viewing in browser
 
 ---
 
-## Important Notes
+## Troubleshooting
 
-- **Do not move or minimize** the game window while running
-- **Keep game in foreground** so the tool can capture screen and control
-- Use **Preview** to verify data before running
-- If stuck, use **ESC** for emergency stop
-- Check **Activity Log** at the bottom of the screen to monitor status and errors
-- You can drag the divider between tabs and log to adjust sizes
+### Common Errors
+| Error | Cause | Solution |
+|-------|-------|----------|
+| Device not connected | Game not open | Open game, keep in foreground |
+| OCR failed | Text unclear | Check game resolution |
+| Template not found | Image doesn't match | Recapture template |
+| Connection timeout | Game not responding | Restart game and tool |
+
+### Optimization Tips
+1. **Keep game in foreground** - Don't minimize
+2. **Check Error History** - Detect errors early
+3. **Use Pause** - Pause when manual intervention needed
+
+---
+
+## FAQ
+
+### Q: When should I use Pause?
+A: When manual intervention is needed (e.g., unexpected popup in game).
+
+### Q: How to continue an interrupted session?
+A: Tool auto-saves progress. When restarting, it will ask if you want to continue.
+
+### Q: Is my data safe?
+A: Tool only reads files you provide and saves results locally. No data sent externally.
+
+---

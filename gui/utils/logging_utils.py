@@ -1,8 +1,10 @@
 """
-Logging System for GUI.
+Logging & Error Handling System for GUI.
 
-Provides buffered logging with bounded queues to prevent memory issues
-during long-running automation sessions.
+Provides:
+- Buffered logging with bounded queues
+- Toast notifications for non-blocking feedback
+- Error history tracking and display
 """
 
 import logging
@@ -10,6 +12,8 @@ import queue
 import threading
 import time
 import tkinter as tk
+from collections import deque
+from datetime import datetime
 from tkinter import scrolledtext, ttk
 from typing import Optional
 
@@ -254,3 +258,115 @@ class LogViewer:
     def destroy(self):
         """Cleanup when destroying the viewer."""
         self.stop_polling()
+
+
+# ==================== TOAST NOTIFICATIONS ====================
+
+class ToastNotification(tk.Toplevel):
+    """Non-blocking toast notification popup."""
+    COLORS = {
+        "info": ("#E3F2FD", "#1976D2"), "success": ("#E8F5E9", "#388E3C"),
+        "warning": ("#FFF3E0", "#F57C00"), "error": ("#FFEBEE", "#D32F2F"),
+    }
+    ICONS = {"info": "ℹ", "success": "✓", "warning": "⚠", "error": "✗"}
+
+    def __init__(self, parent, message: str, severity: str = "info", duration: int = 4000):
+        super().__init__(parent)
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        bg, fg = self.COLORS.get(severity, self.COLORS["info"])
+        
+        frame = tk.Frame(self, bg=fg, padx=1, pady=1)
+        frame.pack(fill="both", expand=True)
+        inner = tk.Frame(frame, bg=bg, padx=12, pady=8)
+        inner.pack(fill="both", expand=True)
+        
+        tk.Label(inner, text=self.ICONS.get(severity, "•"), font=("Segoe UI", 12, "bold"), bg=bg, fg=fg).pack(side="left", padx=(0, 8))
+        tk.Label(inner, text=message, font=("Segoe UI", 9), bg=bg, fg="#333", wraplength=300).pack(side="left", fill="x", expand=True)
+        close = tk.Label(inner, text="×", font=("Segoe UI", 12), bg=bg, fg="#666", cursor="hand2")
+        close.pack(side="right", padx=(8, 0))
+        close.bind("<Button-1>", lambda e: self.destroy())
+        
+        self.update_idletasks()
+        parent.update_idletasks()
+        x = parent.winfo_rootx() + parent.winfo_width() - self.winfo_width() - 20
+        self.geometry(f"+{x}+{parent.winfo_rooty() + 60}")
+        self.after(duration, self.destroy)
+
+
+class ErrorManager:
+    """Centralized error management with toast notifications and history tracking."""
+    _root: Optional[tk.Tk] = None
+    _history: deque = deque(maxlen=50)
+    _history_panel = None
+
+    @classmethod
+    def initialize(cls, root: tk.Tk, history_panel=None):
+        """Initialize with root window and optional history panel."""
+        cls._root = root
+        cls._history_panel = history_panel
+
+    @classmethod
+    def show_toast(cls, message: str, severity: str = "info", duration: int = 4000):
+        """Show a toast notification."""
+        if cls._root:
+            ToastNotification(cls._root, message, severity, duration)
+
+    @classmethod
+    def log_error(cls, message: str, severity: str = "error", details: str = "", show_toast: bool = True):
+        """Log an error with optional toast and history tracking."""
+        entry = {"time": datetime.now().strftime("%H:%M:%S"), "severity": severity, "message": message, "details": details}
+        cls._history.append(entry)
+        if cls._history_panel and hasattr(cls._history_panel, 'add_error'):
+            cls._history_panel.add_error(message, severity, details)
+        if show_toast:
+            cls.show_toast(message, severity)
+        getattr(logger, severity if severity in ("info", "warning", "error") else "info")(message)
+
+    @classmethod
+    def info(cls, msg: str, show_toast: bool = True): cls.log_error(msg, "info", show_toast=show_toast)
+    @classmethod
+    def warning(cls, msg: str, details: str = "", show_toast: bool = True): cls.log_error(msg, "warning", details, show_toast)
+    @classmethod
+    def error(cls, msg: str, details: str = "", show_toast: bool = True): cls.log_error(msg, "error", details, show_toast)
+    @classmethod
+    def success(cls, msg: str, show_toast: bool = True): cls.log_error(msg, "success", show_toast=show_toast)
+
+
+class ErrorHistoryPanel(ttk.LabelFrame):
+    """Panel displaying error history with filtering."""
+    def __init__(self, parent, max_entries: int = 50):
+        super().__init__(parent, text="Error History", padding=5)
+        self.errors: deque = deque(maxlen=max_entries)
+        
+        toolbar = ttk.Frame(self)
+        toolbar.pack(fill="x", pady=(0, 5))
+        ttk.Button(toolbar, text="Clear", command=self.clear, width=8).pack(side="left")
+        self.count_label = ttk.Label(toolbar, text="0 errors", font=("Segoe UI", 8))
+        self.count_label.pack(side="right")
+        
+        self.error_list = ttk.Treeview(self, columns=("time", "type", "msg"), show="headings", height=4)
+        self.error_list.heading("time", text="Time")
+        self.error_list.heading("type", text="Type")
+        self.error_list.heading("msg", text="Message")
+        self.error_list.column("time", width=60)
+        self.error_list.column("type", width=50)
+        self.error_list.column("msg", width=150)
+        self.error_list.pack(fill="both", expand=True)
+        
+        for tag, color in [("error", "#D32F2F"), ("warning", "#F57C00"), ("info", "#1976D2")]:
+            self.error_list.tag_configure(tag, foreground=color)
+
+    def add_error(self, message: str, severity: str = "error", details: str = ""):
+        """Add an error entry to the history."""
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.errors.append({"time": ts, "severity": severity, "message": message})
+        self.error_list.insert("", 0, values=(ts, severity.upper(), message[:80]), tags=(severity,))
+        self.count_label.configure(text=f"{len(self.errors)} errors")
+
+    def clear(self):
+        """Clear all error entries."""
+        self.errors.clear()
+        for item in self.error_list.get_children():
+            self.error_list.delete(item)
+        self.count_label.configure(text="0 errors")

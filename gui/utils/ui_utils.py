@@ -258,3 +258,61 @@ class UIUtils:
     def show_error(parent: tk.Widget, title: str, message: str):
         """Show error message dialog."""
         messagebox.showerror(title, message, parent=parent)
+
+
+# ==================== TOOLTIPS ====================
+
+class ToolTip:
+    """Hover tooltip for widgets with configurable delay."""
+    def __init__(self, widget: tk.Widget, text: str, delay: int = 500):
+        self.widget, self.text, self.delay = widget, text, delay
+        self.tip_window = None
+        self.scheduled = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, e=None):
+        self._cancel()
+        self.scheduled = self.widget.after(self.delay, self._show)
+
+    def _cancel(self):
+        if self.scheduled:
+            self.widget.after_cancel(self.scheduled)
+            self.scheduled = None
+
+    def _show(self, e=None):
+        if self.tip_window: return
+        x, y = self.widget.winfo_rootx() + 20, self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+        self.tip_window = tk.Toplevel(self.widget)
+        self.tip_window.wm_overrideredirect(True)
+        self.tip_window.wm_attributes("-topmost", True)
+        frame = tk.Frame(self.tip_window, bg="#333", borderwidth=1, relief="solid")
+        frame.pack()
+        tk.Label(frame, text=self.text, bg="#333", fg="#fff", font=("Segoe UI", 9), wraplength=250, padx=8, pady=5).pack()
+        self.tip_window.wm_geometry(f"+{x}+{y}")
+
+    def _hide(self, e=None):
+        self._cancel()
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
+
+
+class TooltipManager:
+    """Centralized tooltip management with predefined tips."""
+    TIPS = {
+        "start_button": "Start automation (Ctrl+Enter)",
+        "stop_button": "Stop automation (Ctrl+Q, ESC, F9)",
+        "pause_button": "Pause/Resume (Ctrl+P)",
+        "browse_file": "Select data file (CSV/JSON)",
+        "preview_data": "Preview file contents",
+        "force_new_session": "Ignore saved progress, start fresh",
+    }
+    _tooltips: Dict[str, ToolTip] = {}
+
+    @classmethod
+    def add_tooltip(cls, widget: tk.Widget, key_or_text: str, delay: int = 500):
+        """Add tooltip to widget using predefined key or custom text."""
+        text = cls.TIPS.get(key_or_text, key_or_text)
+        cls._tooltips[str(id(widget))] = ToolTip(widget, text, delay)

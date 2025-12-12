@@ -2,5 +2,8 @@
 oneocr
 airtest
 
+# GUI enhancements
+Pillow
+
 # YOLO (disabled for faster launch - uncomment when needed)
 # ultralytics

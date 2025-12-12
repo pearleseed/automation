@@ -21,7 +21,12 @@ from airtest.core.api import sleep
 from core.agent import Agent
 from core.base import BaseAutomation, CancellationError, ExecutionStep, StepResult
 from core.config import HOPPING_ROI_CONFIG, get_hopping_config, merge_config
-from core.data import ResultWriter, load_data
+from core.data import (
+    ResultWriter,
+    find_hopping_spot,
+    group_hopping_by_course,
+    load_hopping_data,
+)
 from core.detector import (
     YOLO_AVAILABLE,
     OCRTextProcessor,
@@ -41,11 +46,17 @@ class HoppingAutomation(BaseAutomation):
     """
 
     def __init__(
-        self, agent: Agent, config: Optional[Dict[str, Any]] = None, cancel_event=None
+        self, agent: Agent, config: Optional[Dict[str, Any]] = None, cancel_event=None,
+        pause_event=None, preview_callback=None
     ):
         base_config = get_hopping_config()
         cfg = merge_config(base_config, config) if config else base_config
-        super().__init__(agent, cfg, HOPPING_ROI_CONFIG, cancel_event=cancel_event)
+        super().__init__(
+            agent, cfg, HOPPING_ROI_CONFIG, 
+            cancel_event=cancel_event,
+            pause_event=pause_event,
+            preview_callback=preview_callback
+        )
 
         self.config = cfg
 
@@ -324,7 +335,7 @@ class HoppingAutomation(BaseAutomation):
                 logger=self.structured_logger,
             )
             if step1.execute() != StepResult.SUCCESS:
-                return {"success": False, "verification_details": {}}
+                return {"success": False, "verified": False, "verification_details": {}}
 
             # ==================== STEP 2: TOUCH USE BUTTON IN ROI ====================
 
@@ -339,7 +350,7 @@ class HoppingAutomation(BaseAutomation):
                 logger=self.structured_logger,
             )
             if step2.execute() != StepResult.SUCCESS:
-                return {"success": False, "verification_details": {}}
+                return {"success": False, "verified": False, "verification_details": {}}
 
             # ==================== STEP 3: TOUCH OK BUTTON ====================
 
@@ -354,7 +365,7 @@ class HoppingAutomation(BaseAutomation):
                 logger=self.structured_logger,
             )
             if step3.execute() != StepResult.SUCCESS:
-                return {"success": False, "verification_details": {}}
+                return {"success": False, "verified": False, "verification_details": {}}
 
             # ==================== STEP 4: SNAPSHOT ITEM ====================
 
@@ -374,7 +385,7 @@ class HoppingAutomation(BaseAutomation):
                 logger=self.structured_logger,
             )
             if step4.execute() != StepResult.SUCCESS:
-                return {"success": False, "verification_details": {}}
+                return {"success": False, "verified": False, "verification_details": {}}
 
             # ==================== STEP 5: VERIFICATION ====================
 
@@ -384,12 +395,25 @@ class HoppingAutomation(BaseAutomation):
                 ["アイテム名", "獲得数"],
             )
 
+            is_verified = True  # Track if verification was successful
+
             def _verify():
-                nonlocal is_ok, screenshot_item, verification_details
+                nonlocal is_ok, is_verified, screenshot_item, verification_details
                 self.check_cancelled("Verification")
 
                 # Scan ROIs from item screenshot
                 extracted = self.scan_screen_roi(screenshot_item, verification_rois)
+
+                # Check if we got any extracted data
+                if not extracted or all(
+                    not v.get("text", "").strip() if isinstance(v, dict) else not str(v).strip()
+                    for v in extracted.values()
+                ):
+                    # No data extracted - mark as unverified (Draw Unchecked)
+                    is_verified = False
+                    is_ok = False
+                    self.structured_logger.warning("Verification: No data extracted - Draw Unchecked")
+                    return True
 
                 # Compare with expected data from CSV
                 is_ok, msg, verification_details = self.compare_results(
@@ -404,7 +428,13 @@ class HoppingAutomation(BaseAutomation):
                 if verification_details:
                     for field, details in verification_details.items():
                         status = details.get("status", "unknown")
-                        result_mark = "✓" if status == "match" else "✗"
+                        if status == "match":
+                            result_mark = "✓"
+                        elif status == "unverified":
+                            result_mark = "?"
+                            is_verified = False
+                        else:
+                            result_mark = "✗"
                         self.structured_logger.info(
                             f"  {result_mark} {field}: {status.upper()} "
                             f"(expected: {details.get('expected', 'N/A')}, "
@@ -427,16 +457,19 @@ class HoppingAutomation(BaseAutomation):
             # ==================== FINAL RESULT ====================
 
             duration = time.time() - start_time
+            result_label = "OK" if is_ok else ("Draw Unchecked" if not is_verified else "NG")
             self.structured_logger.stage_end(course_idx, is_ok, duration)
+            self.structured_logger.info(f"Course {course_idx} Result: {result_label}")
 
             return {
                 "success": is_ok,
+                "verified": is_verified,
                 "verification_details": verification_details,
             }
 
         except CancellationError:
             self.structured_logger.warning(f"Course {course_idx} cancelled by user")
-            return {"success": False, "verification_details": {}}
+            return {"success": False, "verified": False, "verification_details": {}}
         except Exception as e:
             self.structured_logger.error(
                 f"Course {course_idx} failed with exception: {e}"
@@ -444,7 +477,7 @@ class HoppingAutomation(BaseAutomation):
             import traceback
 
             self.structured_logger.error(traceback.format_exc())
-            return {"success": False, "verification_details": {}}
+            return {"success": False, "verified": False, "verification_details": {}}
 
     def run_all_courses(
         self,
@@ -457,8 +490,13 @@ class HoppingAutomation(BaseAutomation):
     ) -> bool:
         """Run automation for all courses with incremental saving and resume support.
 
+        Results are validated against the dataset before writing:
+        - OK: Correct result verified
+        - NG: Incorrect result verified
+        - Draw Unchecked: Result could not be verified
+
         Args:
-            data_path: Path to CSV/JSON file with course data.
+            data_path: Path to CSV/JSON file with hopping data.
             output_path: Output result path (None = auto-generate).
             use_detector: Use detector (YOLO/Template).
             resume: Resume from existing results if available.
@@ -472,10 +510,21 @@ class HoppingAutomation(BaseAutomation):
         start_time = time.time()
 
         try:
-            # Load data
-            courses_data = load_data(data_path)
+            # Load hopping dataset (supports both CSV and JSON)
+            hopping_dataset = load_hopping_data(data_path)
+            if not hopping_dataset:
+                self.structured_logger.error(
+                    f"Failed to load hopping data from {data_path}"
+                )
+                return False
+
+            # Store dataset for spot validation during automation
+            self._hopping_dataset = hopping_dataset
+
+            # Group spots by course for automation
+            courses_data = group_hopping_by_course(hopping_dataset)
             if not courses_data:
-                self.structured_logger.error(f"Failed to load data from {data_path}")
+                self.structured_logger.error("No courses found in hopping data")
                 return False
 
             # Apply start course index filter
@@ -617,33 +666,61 @@ class HoppingAutomation(BaseAutomation):
 
                 # Extract results
                 is_ok = course_result.get("success", False)
+                is_verified = course_result.get("verified", True)
                 verification_details = course_result.get("verification_details", {})
 
-                if is_ok:
-                    success_count += 1
+                # Determine result status for pool hopping
+                # OK = correct result, NG = incorrect, Draw Unchecked = unverified
+                if is_verified:
+                    if is_ok:
+                        success_count += 1
+                        result_status = ResultWriter.RESULT_OK
+                    else:
+                        failed_count += 1
+                        result_status = ResultWriter.RESULT_NG
                 else:
+                    # Unverified draw - could not confirm result
                     failed_count += 1
+                    result_status = ResultWriter.RESULT_DRAW_UNCHECKED
 
-                # Prepare result data
+                # Prepare result data for pool hopping
                 result_data = {
                     "test_case_id": test_case.get("test_case_id"),
-                    "コース名": course_data.get("コース名", ""),
+                    "Course": course_data.get("コース名", ""),
                 }
 
-                # Add verification results
+                # Add spots info if available
+                spots = course_data.get("spots", [])
+                if spots:
+                    result_data["total_spots"] = len(spots)
+
+                # Add verification results with hopping-specific status values
                 for field, details in verification_details.items():
                     status = details.get("status", "unknown")
                     result_data[f"{field}_expected"] = details.get("expected", "")
                     result_data[f"{field}_extracted"] = details.get(
                         "extracted_value", ""
                     )
-                    result_data[f"{field}_status"] = "OK" if status == "match" else "NG"
+                    # Hopping result values: OK, NG, Draw Unchecked
+                    if status == "match":
+                        result_data[f"{field}_status"] = "OK"
+                    elif status == "unverified":
+                        result_data[f"{field}_status"] = "Draw Unchecked"
+                    else:
+                        result_data[f"{field}_status"] = "NG"
 
-                # Save result
+                # Determine error message based on result status
+                error_msg = None
+                if result_status == ResultWriter.RESULT_NG:
+                    error_msg = "Verification failed"
+                elif result_status == ResultWriter.RESULT_DRAW_UNCHECKED:
+                    error_msg = "Draw result could not be verified"
+
+                # Record result (validated against dataset)
                 result_writer.add_result(
                     result_data,
-                    ResultWriter.RESULT_OK if is_ok else ResultWriter.RESULT_NG,
-                    error_message=None if is_ok else "Verification failed",
+                    result_status,
+                    error_message=error_msg,
                 )
 
                 # Progress log

@@ -9,6 +9,7 @@ from tkinter import messagebox, ttk
 
 from core.agent import Agent
 from core.utils import get_logger
+from gui.utils.logging_utils import ErrorHistoryPanel, ErrorManager
 from gui.tabs.festival_tab import FestivalTab
 from gui.tabs.gacha_tab import GachaTab
 from gui.tabs.hopping_tab import HoppingTab
@@ -56,6 +57,9 @@ class AutoCPeachGUI(tk.Tk):
 
         # Setup UI
         self.setup_ui()
+        
+        # Initialize ErrorManager after UI is ready
+        ErrorManager.initialize(self, self.error_history_panel if hasattr(self, 'error_history_panel') else None)
 
         # Check initial device status
         self.check_device()
@@ -223,9 +227,17 @@ class AutoCPeachGUI(tk.Tk):
         self.notebook.add(settings_tab, text="Settings")
         self.setup_settings_tab(settings_tab)
 
-        # Bottom pane: Log viewer
-        log_frame = ttk.Frame(paned)
-        paned.add(log_frame, weight=1)  # Give less weight to logs
+        # Bottom pane: Log viewer and Error History
+        bottom_frame = ttk.Frame(paned)
+        paned.add(bottom_frame, weight=1)  # Give less weight to logs
+        
+        # Create horizontal paned window for logs and errors
+        bottom_paned = ttk.PanedWindow(bottom_frame, orient=tk.HORIZONTAL)
+        bottom_paned.pack(fill="both", expand=True)
+        
+        # Log viewer (left)
+        log_frame = ttk.Frame(bottom_paned)
+        bottom_paned.add(log_frame, weight=3)
 
         self.log_viewer = LogViewer(
             log_frame,
@@ -233,6 +245,16 @@ class AutoCPeachGUI(tk.Tk):
             max_lines=int(self.max_log_lines_var.get()),
             poll_interval=200,
         )
+        
+        # Error history panel (right)
+        error_frame = ttk.Frame(bottom_paned)
+        bottom_paned.add(error_frame, weight=1)
+        
+        self.error_history_panel = ErrorHistoryPanel(error_frame)
+        self.error_history_panel.pack(fill="both", expand=True)
+        
+        # Re-initialize ErrorManager with the panel
+        ErrorManager.initialize(self, self.error_history_panel)
 
         # Footer
         footer_frame = ttk.Frame(self, relief="sunken", borderwidth=1)

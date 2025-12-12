@@ -43,16 +43,40 @@ def _validate_file(file_path: str, check_exists: bool = True) -> None:
         raise FileNotFoundError(f"File not found: {file_path}")
 
 
-def load_csv(file_path: str, encoding: str = "utf-8-sig") -> List[Dict[str, Any]]:
-    """Read data from CSV file."""
+def load_csv(
+    file_path: str, encoding: str = "utf-8-sig", delimiter: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Read data from CSV file with auto-detection of delimiter.
+
+    Args:
+        file_path: Path to CSV file.
+        encoding: File encoding (default: utf-8-sig).
+        delimiter: CSV delimiter. If None, uses platform default (Windows=',', macOS=';').
+
+    Returns:
+        List of dictionaries containing CSV data.
+    """
+    import sys
+
     _validate_file(file_path)
     try:
         with open(file_path, encoding=encoding) as f:
-            data = list(csv.DictReader(f))
-        logger.info(f" Loaded {len(data)} rows from CSV: {file_path}")
+            # Use platform-specific delimiter if not specified
+            # Windows uses ',' while macOS uses ';'
+            if delimiter is None:
+                if sys.platform == "win32":
+                    delimiter = ","
+                else:
+                    # macOS/Linux - use semicolon
+                    delimiter = ";"
+
+            data = list(csv.DictReader(f, delimiter=delimiter))
+        logger.info(
+            f"✓ Loaded {len(data)} rows from CSV: {file_path} (delimiter='{delimiter}')"
+        )
         return data
     except Exception as e:
-        logger.error(f" Error loading CSV: {e}")
+        logger.error(f"✗ Error loading CSV: {e}")
         return []
 
 
@@ -76,12 +100,15 @@ def load_json(file_path: str, encoding: str = "utf-8-sig") -> List[Dict[str, Any
         return []
 
 
-def load_data(file_path: str, encoding: str = "utf-8-sig") -> List[Dict[str, Any]]:
+def load_data(
+    file_path: str, encoding: str = "utf-8-sig", delimiter: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """Auto-detect and load data from CSV or JSON file.
 
     Args:
         file_path: Path to data file (.csv or .json).
-        encoding: File encoding (default: 'utf-8').
+        encoding: File encoding (default: 'utf-8-sig').
+        delimiter: CSV delimiter (only for CSV files). If None, auto-detects.
 
     Returns:
         List[Dict[str, Any]]: List of dictionaries containing loaded data.
@@ -92,11 +119,129 @@ def load_data(file_path: str, encoding: str = "utf-8-sig") -> List[Dict[str, Any
     """
     _validate_file(file_path)
     ext = os.path.splitext(file_path)[1].lower()
-    loaders = {".csv": load_csv, ".json": load_json}
 
-    if ext not in loaders:
+    if ext == ".csv":
+        return load_csv(file_path, encoding, delimiter)
+    elif ext == ".json":
+        return load_json(file_path, encoding)
+    else:
         raise ValueError(f"Unsupported file format: {ext}. Use .csv or .json")
-    return loaders[ext](file_path, encoding)
+
+
+# ==================== HOPPING DATA ====================
+
+
+def load_hopping_data(
+    file_path: str, encoding: str = "utf-8-sig"
+) -> List[Dict[str, Any]]:
+    """Load hopping dataset from CSV or JSON file.
+
+    Pool Hopping dataset structure:
+    - Course: Course identifier (1-6, EX1-EX6)
+    - Spot: Position on the course (1-17+, 岸=shore/end)
+    - Item: Item or special effect at this spot
+    - Number: Quantity or value
+    - Result: Verification result (OK/NG/Draw Unchecked)
+
+    Args:
+        file_path: Path to CSV or JSON file.
+        encoding: File encoding (default: utf-8-sig).
+
+    Returns:
+        List of spot dictionaries with normalized keys.
+    """
+    raw_data = load_data(file_path, encoding)
+    if not raw_data:
+        return []
+
+    # Normalize and process hopping data
+    processed_data = []
+    current_course = None
+
+    for row in raw_data:
+        # Handle both CSV column names and normalized names
+        course = (row.get("Course", "") or row.get("course", "") or "").strip()
+        spot = (row.get("Spot", "") or row.get("spot", "") or "").strip()
+        # Handle typo in CSV header "Item/Spceial Effect "
+        item = (
+            row.get("Item/Spceial Effect ", "")
+            or row.get("Item", "")
+            or row.get("item", "")
+            or ""
+        ).strip()
+        number = (row.get("Number", "") or row.get("number", "") or "").strip()
+        result = (row.get("Result", "") or row.get("result", "") or "").strip()
+
+        # Update current course if specified (for grouped CSV format)
+        if course:
+            current_course = course
+
+        # Skip rows without spot data
+        if not spot:
+            continue
+
+        processed_data.append(
+            {
+                "Course": current_course,
+                "Spot": spot,
+                "Item": item,
+                "Number": number,
+                "Result": result,
+            }
+        )
+
+    logger.info(f"✓ Loaded {len(processed_data)} hopping spots from: {file_path}")
+    return processed_data
+
+
+def group_hopping_by_course(
+    hopping_data: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Group hopping spots by course for automation.
+
+    Args:
+        hopping_data: List of spot data from load_hopping_data().
+
+    Returns:
+        List of course dictionaries with spots as nested list.
+    """
+    if not hopping_data:
+        return []
+
+    courses = {}
+    for spot in hopping_data:
+        course_name = spot.get("Course", "Unknown")
+        if course_name not in courses:
+            courses[course_name] = {
+                "コース名": course_name,
+                "spots": [],
+            }
+        courses[course_name]["spots"].append(spot)
+
+    result = list(courses.values())
+    logger.info(f"✓ Grouped into {len(result)} courses")
+    return result
+
+
+def find_hopping_spot(
+    dataset: List[Dict[str, Any]],
+    course: str,
+    spot: str,
+) -> Optional[Dict[str, Any]]:
+    """Find a specific spot in the hopping dataset for validation.
+
+    Args:
+        dataset: Full hopping dataset.
+        course: Course identifier.
+        spot: Spot position.
+
+    Returns:
+        Matching spot data or None if not found.
+    """
+    for entry in dataset:
+        if entry.get("Course") == course and entry.get("Spot") == spot:
+            return entry
+    return None
 
 
 # ==================== DATA WRITING ====================
@@ -304,7 +449,13 @@ class ResultWriter:
     Supports CSV, JSON, and HTML formats.
     """
 
-    RESULT_OK, RESULT_NG, RESULT_SKIP, RESULT_ERROR = "OK", "NG", "SKIP", "ERROR"
+    # Standard result values
+    RESULT_OK = "OK"
+    RESULT_NG = "NG"
+    RESULT_SKIP = "SKIP"
+    RESULT_ERROR = "ERROR"
+    # Hopping-specific result value for unverified draws
+    RESULT_DRAW_UNCHECKED = "Draw Unchecked"
 
     def __init__(
         self,

@@ -3,6 +3,11 @@ Base Tab Class for Automation Tabs.
 
 Eliminates code duplication across Festival/Gacha/Hopping tabs.
 Provides thread-safe state management and common UI components.
+
+Enhanced with:
+- Pause/Resume functionality
+- Tooltips for better UX
+- Improved error handling with toast notifications
 """
 
 import os
@@ -17,11 +22,11 @@ from core.config import DEFAULT_PATHS
 from core.utils import get_logger, validate_file_path
 from gui.components.progress_panel import ProgressPanel
 from gui.components.quick_actions_panel import QuickActionsPanel
+from gui.utils.logging_utils import ErrorManager
 from gui.utils.thread_utils import get_thread_manager
-from gui.utils.ui_utils import UIUtils
+from gui.utils.ui_utils import TooltipManager, UIUtils
 
 logger = get_logger(__name__)
-
 
 class BaseAutomationTab(ttk.Frame):
     """Base class for all automation tabs in the GUI.
@@ -43,10 +48,13 @@ class BaseAutomationTab(ttk.Frame):
         self.automation_class = automation_class
         self._automation_instance: Optional[Any] = None  # Protected by _state_lock
         self._is_running = False  # Protected by _state_lock
+        self._is_paused = False  # Pause state
         self._state_lock = threading.RLock()  # Use RLock for nested locking
         self.task_id = f"{tab_name.lower()}_automation_{id(self)}"
         self.thread_manager = get_thread_manager()
         self.thread_cancel_event = threading.Event()
+        self.pause_event = threading.Event()  # For pause/resume
+        self.pause_event.set()  # Not paused by default
 
         # UI variables
         self.file_path_var = tk.StringVar()
@@ -63,6 +71,7 @@ class BaseAutomationTab(ttk.Frame):
         self._setup_tab_specific_vars()
 
         self.setup_ui()
+        self._setup_tooltips()
 
     def _setup_tab_specific_vars(self):
         """Setup tab-specific variables. Override in subclass if needed."""
@@ -186,41 +195,41 @@ class BaseAutomationTab(ttk.Frame):
         config_inner.columnconfigure(1, weight=1)
 
     def _setup_action_buttons(self, parent):
-        """Setup action buttons section with compact design."""
+        """Setup action buttons section with pause/resume support."""
         action_frame = ttk.Frame(parent)
         action_frame.pack(fill="x", pady=6)
 
-        # Primary actions
+        # Primary actions row
         primary_frame = ttk.Frame(action_frame)
-        primary_frame.pack(side="left", fill="x", expand=True)
+        primary_frame.pack(fill="x", pady=(0, 5))
 
         self.start_button = ttk.Button(
             primary_frame,
-            text=f"Start {self.tab_name}",
+            text=f"▶ Start {self.tab_name}",
             command=self.start_automation,
             style="Accent.TButton",
         )
         self.start_button.pack(side="left", padx=(0, 3), fill="x", expand=True, ipady=8)
 
+        self.pause_button = ttk.Button(
+            primary_frame,
+            text="⏸ Pause",
+            command=self.toggle_pause,
+            state="disabled",
+            width=10,
+        )
+        self.pause_button.pack(side="left", padx=3, ipady=8)
+
         self.stop_button = ttk.Button(
             primary_frame,
-            text="Stop",
+            text="⏹ Stop",
             command=self.stop_automation,
             state="disabled",
+            width=10,
         )
-        self.stop_button.pack(side="left", fill="x", expand=True, ipady=8)
+        self.stop_button.pack(side="left", ipady=8)
 
-        # Config actions
-        config_frame = ttk.Frame(action_frame)
-        config_frame.pack(side="right")
 
-        ttk.Button(config_frame, text="Save", command=self.save_config, width=8).pack(
-            side="left", padx=2, ipady=5
-        )
-
-        ttk.Button(config_frame, text="Load", command=self.load_config, width=8).pack(
-            side="left", padx=2, ipady=5
-        )
 
     def _setup_right_column(self, parent):
         """Setup right column with progress and quick actions."""
@@ -241,24 +250,32 @@ class BaseAutomationTab(ttk.Frame):
         self.quick_actions = QuickActionsPanel(parent, quick_callbacks)
         self.quick_actions.pack(fill="x", pady=5)
 
-        # Status box
-        status_frame = ttk.LabelFrame(parent, text="Status", padding=10)
+        # Status box with indicator
+        status_frame = ttk.LabelFrame(parent, text="Status", padding=8)
         status_frame.pack(fill="x", pady=5)
+        
+        status_inner = ttk.Frame(status_frame)
+        status_inner.pack(fill="x")
+        
+        # Status indicator dot
+        self.status_canvas = tk.Canvas(status_inner, width=12, height=12, highlightthickness=0)
+        self.status_canvas.pack(side="left", padx=(0, 5))
+        self._draw_status_indicator("ready")
 
         status_label = ttk.Label(
-            status_frame,
+            status_inner,
             textvariable=self.status_var,
-            font=("", 9),
-            wraplength=220,
+            font=("Segoe UI", 9),
+            wraplength=200,
             justify="left",
         )
-        status_label.pack(fill="x")
+        status_label.pack(side="left", fill="x", expand=True)
 
         # Keyboard shortcuts hint
-        shortcuts_frame = ttk.LabelFrame(parent, text="Keyboard Shortcuts", padding=8)
+        shortcuts_frame = ttk.LabelFrame(parent, text="Shortcuts", padding=5)
         shortcuts_frame.pack(fill="x", pady=5)
 
-        shortcuts_text = "Stop Automation:\n" "• Ctrl+Q\n" "• ESC (Emergency)\n" "• F9"
+        shortcuts_text = "Ctrl+Q/ESC/F9: Stop\nCtrl+P: Pause/Resume"
         ttk.Label(
             shortcuts_frame,
             text=shortcuts_text,
@@ -266,6 +283,19 @@ class BaseAutomationTab(ttk.Frame):
             foreground="#666",
             justify="left",
         ).pack(anchor="w")
+
+    def _draw_status_indicator(self, status: str):
+        """Draw status indicator dot with color based on status."""
+        colors = {
+            "ready": "#4CAF50",      # Green
+            "running": "#2196F3",    # Blue
+            "paused": "#FF9800",     # Orange
+            "error": "#F44336",      # Red
+            "stopped": "#9E9E9E",    # Gray
+        }
+        color = colors.get(status, "#9E9E9E")
+        self.status_canvas.delete("all")
+        self.status_canvas.create_oval(2, 2, 10, 10, fill=color, outline="")
 
     # Common file browsing methods
     def browse_file(self):
@@ -1044,19 +1074,22 @@ class BaseAutomationTab(ttk.Frame):
             raise
 
     def _automation_finished(self, success: bool, error_msg: str = ""):
-        """Handle automation completion."""
+        """Handle automation completion with improved feedback."""
         self._set_running_state(False)
         self._cleanup_automation()
 
         if success:
             self.status_var.set("Completed!")
-            messagebox.showinfo("Success", f"{self.tab_name} completed!")
+            self._draw_status_indicator("ready")
+            ErrorManager.success(f"{self.tab_name} completed successfully!")
         else:
             self.status_var.set("Failed")
-            msg = f"{self.tab_name} failed!"
-            if error_msg:
-                msg += f"\n\n{error_msg}"
-            messagebox.showerror("Error", msg)
+            self._draw_status_indicator("error")
+            ErrorManager.error(
+                f"{self.tab_name} failed!",
+                details=error_msg,
+                show_toast=True
+            )
 
     @property
     def is_running(self) -> bool:
@@ -1073,10 +1106,19 @@ class BaseAutomationTab(ttk.Frame):
     def _set_running_state(self, running: bool):
         """Update UI state for running/stopped (thread-safe)."""
         self.is_running = running
+        self._is_paused = False
+        self.pause_event.set()  # Ensure not paused
+        
         self.start_button.config(state="disabled" if running else "normal")
         self.stop_button.config(state="normal" if running else "disabled")
+        self.pause_button.config(state="normal" if running else "disabled")
+        self.pause_button.config(text="⏸ Pause")
+        
         if running:
             self.status_var.set("Running...")
+            self._draw_status_indicator("running")
+        else:
+            self._draw_status_indicator("ready")
 
     def stop_automation(self, skip_confirm: bool = False):
         """Stop running automation.
@@ -1089,16 +1131,51 @@ class BaseAutomationTab(ttk.Frame):
                 return
 
         self.thread_cancel_event.set()
+        self.pause_event.set()  # Ensure not stuck in pause
         self.status_var.set("Stopping...")
+        self._draw_status_indicator("stopped")
 
         if self.thread_manager.cancel_task(self.task_id, timeout=3.0):
             self._set_running_state(False)
             self.status_var.set("Stopped")
             logger.info(f"{self.tab_name} stopped by user")
+            ErrorManager.info(f"{self.tab_name} stopped by user")
         else:
             self.status_var.set("Stopping (please wait...)")
 
         self._cleanup_automation()
+
+    def toggle_pause(self):
+        """Toggle pause/resume state."""
+        if not self.is_running:
+            return
+        
+        with self._state_lock:
+            self._is_paused = not self._is_paused
+            
+            if self._is_paused:
+                self.pause_event.clear()  # Block automation
+                self.pause_button.config(text="▶ Resume")
+                self.status_var.set("Paused")
+                self._draw_status_indicator("paused")
+                logger.info(f"{self.tab_name} paused")
+                ErrorManager.info(f"{self.tab_name} paused - Click Resume to continue")
+            else:
+                self.pause_event.set()  # Unblock automation
+                self.pause_button.config(text="⏸ Pause")
+                self.status_var.set("Running...")
+                self._draw_status_indicator("running")
+                logger.info(f"{self.tab_name} resumed")
+
+
+
+    def _setup_tooltips(self):
+        """Setup tooltips for all interactive elements."""
+        TooltipManager.add_tooltip(self.start_button, "start_button")
+        TooltipManager.add_tooltip(self.stop_button, "stop_button")
+        TooltipManager.add_tooltip(self.pause_button, "pause_button")
+
+
 
     @property
     def automation_instance(self) -> Optional[Any]:
@@ -1215,23 +1292,37 @@ class BaseAutomationTab(ttk.Frame):
         - Ctrl+Q: Stop automation
         - ESC: Stop automation (emergency stop)
         - F9: Stop automation
+        - Ctrl+P: Pause/Resume
+        - Ctrl+Enter: Start automation
         """
         # Bind to the tab frame itself
         self.bind_all("<Control-q>", self._handle_stop_shortcut)
         self.bind_all("<Escape>", self._handle_stop_shortcut)
         self.bind_all("<F9>", self._handle_stop_shortcut)
+        self.bind_all("<Control-p>", self._handle_pause_shortcut)
+        self.bind_all("<Control-Return>", self._handle_start_shortcut)
 
-        logger.info(
-            f"{self.tab_name} tab: Keyboard shortcuts enabled (Ctrl+Q, ESC, F9 to stop)"
+        logger.debug(
+            f"{self.tab_name} tab: Keyboard shortcuts enabled"
         )
 
     def _handle_stop_shortcut(self, event):
-        """Handle keyboard shortcut for stopping automation.
-
-        Only triggers if automation is currently running in this tab.
-        """
-        # Only stop if this automation is running
+        """Handle keyboard shortcut for stopping automation."""
         if self.is_running:
             logger.info(f"Stop shortcut triggered: {event.keysym}")
-            self.stop_automation(skip_confirm=True)  # Skip confirmation for quick stop
-            return "break"  # Prevent event propagation
+            self.stop_automation(skip_confirm=True)
+            return "break"
+
+    def _handle_pause_shortcut(self, event):
+        """Handle keyboard shortcut for pause/resume."""
+        if self.is_running:
+            logger.info(f"Pause shortcut triggered: {event.keysym}")
+            self.toggle_pause()
+            return "break"
+
+    def _handle_start_shortcut(self, event):
+        """Handle keyboard shortcut for starting automation."""
+        if not self.is_running:
+            logger.info(f"Start shortcut triggered: {event.keysym}")
+            self.start_automation()
+            return "break"

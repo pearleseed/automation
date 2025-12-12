@@ -282,7 +282,9 @@ class FestivalTab(BaseAutomationTab):
             with self._state_lock:
                 if not self._automation_instance:
                     self._automation_instance = self.automation_class(
-                        self.agent, config, cancel_event=self.thread_cancel_event
+                        self.agent, config,
+                        cancel_event=self.thread_cancel_event,
+                        pause_event=self.pause_event,
                     )
                     if not self._automation_instance:
                         raise RuntimeError("Failed to initialize Festival automation")
