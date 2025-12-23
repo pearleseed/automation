@@ -6,7 +6,6 @@ Provides thread-safe state management and common UI components.
 
 Enhanced with:
 - Pause/Resume functionality
-- Tooltips for better UX
 - Improved error handling with toast notifications
 """
 
@@ -20,11 +19,10 @@ from typing import Any, Dict, Optional
 from core.agent import Agent
 from core.config import DEFAULT_PATHS
 from core.utils import get_logger, validate_file_path
-from gui.components.progress_panel import ProgressPanel
 from gui.components.quick_actions_panel import QuickActionsPanel
 from gui.utils.logging_utils import ErrorManager
 from gui.utils.thread_utils import get_thread_manager
-from gui.utils.ui_utils import TooltipManager, UIUtils
+from gui.utils.ui_utils import UIUtils
 
 logger = get_logger(__name__)
 
@@ -71,7 +69,6 @@ class BaseAutomationTab(ttk.Frame):
         self._setup_tab_specific_vars()
 
         self.setup_ui()
-        self._setup_tooltips()
 
     def _setup_tab_specific_vars(self):
         """Setup tab-specific variables. Override in subclass if needed."""
@@ -232,11 +229,7 @@ class BaseAutomationTab(ttk.Frame):
 
 
     def _setup_right_column(self, parent):
-        """Setup right column with progress and quick actions."""
-
-        # Progress panel
-        self.progress_panel = ProgressPanel(parent)
-        self.progress_panel.pack(fill="x", pady=5)
+        """Setup right column with quick actions and status."""
 
         # Quick actions panel
         quick_callbacks = {
@@ -1169,11 +1162,7 @@ class BaseAutomationTab(ttk.Frame):
 
 
 
-    def _setup_tooltips(self):
-        """Setup tooltips for all interactive elements."""
-        TooltipManager.add_tooltip(self.start_button, "start_button")
-        TooltipManager.add_tooltip(self.stop_button, "stop_button")
-        TooltipManager.add_tooltip(self.pause_button, "pause_button")
+
 
 
 

@@ -399,44 +399,6 @@ def write_json(
         return False
 
 
-def write_html(
-    file_path: str, data: List[Dict[str, Any]], encoding: str = "utf-8-sig"
-) -> bool:
-    """Write list of dictionaries to HTML report with atomic write.
-
-    Args:
-        file_path: Output file path.
-        data: List of dictionaries to write.
-        encoding: File encoding.
-
-    Returns:
-        bool: True if write successful, False otherwise.
-    """
-    if not data:
-        logger.warning("No data to write")
-        return False
-
-    try:
-        from core.utils import generate_html_report_content
-
-        _validate_file(file_path, check_exists=False)
-        html_content = generate_html_report_content(data)
-
-        def write_data(f):
-            f.write(html_content)
-
-        if _atomic_write(file_path, write_data, encoding):
-            logger.debug(f"Wrote {len(data)} items to HTML: {file_path}")
-            return True
-        return False
-
-    except ValueError as e:
-        logger.error(f"Invalid file path: {e}")
-        return False
-    except Exception as e:
-        logger.error(f"Error writing HTML: {e}")
-        return False
-
 
 # ==================== RESULT WRITER CLASS ====================
 
@@ -446,7 +408,7 @@ class ResultWriter:
 
     This class provides incremental result writing with automatic resume capability,
     allowing interrupted automation sessions to continue from where they left off.
-    Supports CSV, JSON, and HTML formats.
+    Supports CSV and JSON formats.
     """
 
     # Standard result values
@@ -468,7 +430,7 @@ class ResultWriter:
 
         Args:
             output_path: Base path for output files (extension will be adjusted for formats).
-            formats: List of formats to write (['csv', 'json', 'html']). Default: ['csv'].
+            formats: List of formats to write (['csv', 'json']). Default: ['csv'].
             auto_write: Automatically write after each add_result (default: True).
             resume: Load existing results if file exists (default: True).
         """
@@ -581,10 +543,6 @@ class ResultWriter:
             if not write_json(f"{self.base_path}.json", self.results):
                 success = False
 
-        # Write HTML
-        if "html" in self.formats:
-            if not write_html(f"{self.base_path}.html", self.results):
-                success = False
 
         if success and clear_after_write:
             self.clear()

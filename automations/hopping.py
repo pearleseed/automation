@@ -28,10 +28,8 @@ from core.data import (
     load_hopping_data,
 )
 from core.detector import (
-    YOLO_AVAILABLE,
     OCRTextProcessor,
     TemplateMatcher,
-    YOLODetector,
 )
 from core.utils import StructuredLogger, ensure_directory, get_logger
 
@@ -68,7 +66,7 @@ class HoppingAutomation(BaseAutomation):
             name="HoppingAutomation", log_file=log_file
         )
 
-        # Detector support (like festival)
+        # Detector support (template matching only)
         self.detector = None
         self.use_detector = cfg.get("use_detector", False)
         if self.use_detector:
@@ -88,48 +86,14 @@ class HoppingAutomation(BaseAutomation):
         )
 
     def _create_detector(self, cfg: Dict[str, Any], agent: Agent) -> Optional[Any]:
-        """Factory method for creating detectors (YOLO or Template Matching)."""
-        detector_type = cfg.get("detector_type", "template")
-
-        if detector_type == "auto":
-            if YOLO_AVAILABLE:
-                try:
-                    yolo_config = cfg.get("yolo_config", {})
-                    logger.info("Using YOLO Detector")
-                    return YOLODetector(
-                        agent=agent,
-                        model_path=yolo_config.get("model_path", "yolo11n.pt"),
-                        confidence=yolo_config.get("confidence", 0.25),
-                        device=yolo_config.get("device", "cpu"),
-                    )
-                except Exception as e:
-                    logger.warning(f"YOLO init failed: {e}, fallback to Template")
-            detector_type = "template"
-
-        if detector_type == "yolo":
-            try:
-                yolo_config = cfg.get("yolo_config", {})
-                logger.info("Using YOLO Detector")
-                return YOLODetector(
-                    agent=agent,
-                    model_path=yolo_config.get("model_path", "yolo11n.pt"),
-                    confidence=yolo_config.get("confidence", 0.25),
-                    device=yolo_config.get("device", "cpu"),
-                )
-            except Exception as e:
-                logger.error(f"YOLO init failed: {e}")
-                return None
-
-        if detector_type == "template":
-            template_config = cfg.get("template_config", {})
-            logger.info("Using Template Matcher")
-            return TemplateMatcher(
-                templates_dir=template_config.get("templates_dir", self.templates_path),
-                threshold=template_config.get("threshold", 0.85),
-                ocr_engine=agent.ocr_engine,
-            )
-
-        return None
+        """Factory method for creating template matcher detector."""
+        template_config = cfg.get("template_config", {})
+        logger.info("Using Template Matcher")
+        return TemplateMatcher(
+            templates_dir=template_config.get("templates_dir", self.templates_path),
+            threshold=template_config.get("threshold", 0.85),
+            ocr_engine=agent.ocr_engine,
+        )
 
     def _manage_resume_state(self, action: str, **kwargs) -> Optional[Dict[str, Any]]:
         """Manage resume state: load, save, complete, or clear.
@@ -296,7 +260,7 @@ class HoppingAutomation(BaseAutomation):
         Args:
             course_data: Dictionary containing course information from CSV.
             course_idx: Course index number for logging and tracking.
-            use_detector: Enable YOLO/Template detector for item verification.
+            use_detector: Enable Template detector for item verification.
 
         Returns:
             Dict with success status and verification details.
@@ -342,9 +306,10 @@ class HoppingAutomation(BaseAutomation):
             step2 = ExecutionStep(
                 step_num=2,
                 name="Touch Use Button",
-                action=lambda: self.touch_template("tpl_use.png"),
-                max_retries=max_retries,
-                retry_delay=retry_delay,
+                # Adaptive wait for use button
+                action=lambda: self.wait_and_touch_template("tpl_use.png", timeout=30),
+                max_retries=1,
+                retry_delay=0,
                 post_delay=0.5,
                 cancel_checker=self.check_cancelled,
                 logger=self.structured_logger,
@@ -357,9 +322,10 @@ class HoppingAutomation(BaseAutomation):
             step3 = ExecutionStep(
                 step_num=3,
                 name="Touch OK Button",
-                action=lambda: self.touch_template("tpl_ok.png"),
-                max_retries=max_retries,
-                retry_delay=retry_delay,
+                # Adaptive wait for OK button
+                action=lambda: self.wait_and_touch_template("tpl_ok.png", timeout=30),
+                max_retries=1,
+                retry_delay=0,
                 post_delay=1.0,
                 cancel_checker=self.check_cancelled,
                 logger=self.structured_logger,
@@ -498,7 +464,7 @@ class HoppingAutomation(BaseAutomation):
         Args:
             data_path: Path to CSV/JSON file with hopping data.
             output_path: Output result path (None = auto-generate).
-            use_detector: Use detector (YOLO/Template).
+            use_detector: Use detector (Template).
             resume: Resume from existing results if available.
             force_new_session: Force start new session.
             start_course_index: Index of course to start from (1-based).
@@ -791,7 +757,7 @@ class HoppingAutomation(BaseAutomation):
 
         Args:
             data_path: Path to CSV/JSON file with course data.
-            use_detector: Use detector (YOLO/Template).
+            use_detector: Use detector (Template).
             output_path: Output result path (None = auto-generate).
             force_new_session: Force start new session.
             start_course_index: Index of course to start from (1-based).

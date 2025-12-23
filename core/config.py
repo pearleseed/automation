@@ -108,13 +108,6 @@ HOPPING_ROI_CONFIG: Dict[str, list] = {
 
 # ==================== DETECTOR CONFIGURATION ====================
 DETECTOR_CONFIG: Dict[str, Any] = {
-    "yolo": {
-        "model_path": "yolo11n.pt",  # Model: n/s/m/l/x
-        "confidence": 0.25,  # Confidence threshold (0.0-1.0)
-        "iou": 0.45,  # IoU threshold for NMS
-        "imgsz": 640,  # Input image size
-        "device": "cpu",  # Device: cpu/cuda/mps/auto
-    },
     "template": {
         "templates_dir": DEFAULT_PATHS["templates"],  # Templates directory
         "threshold": 0.85,  # Match threshold (0.0-1.0)
@@ -141,10 +134,9 @@ FESTIVAL_CONFIG: Dict[str, Any] = {
     "retry_delay": 1.0,
     # Fuzzy matching (0.9+=strict, 0.7-0.8=balanced, 0.5-0.6=lenient)
     "fuzzy_matching": {"enabled": True, "threshold": 0.7},
-    # Detector (yolo/template/auto)
+    # Detector (template only)
     "use_detector": True,
     "detector_type": "template",
-    "yolo_config": {"model_path": "yolo11n.pt", "confidence": 0.25, "device": "cpu"},
     "template_config": {
         "templates_dir": DEFAULT_PATHS["templates"],
         "threshold": 0.85,
@@ -196,10 +188,9 @@ HOPPING_CONFIG: Dict[str, Any] = {
     "retry_delay": 1.0,
     # Fuzzy matching (0.9+=strict, 0.7-0.8=balanced, 0.5-0.6=lenient)
     "fuzzy_matching": {"enabled": True, "threshold": 0.7},
-    # Detector (yolo/template/auto)
+    # Detector (template only)
     "use_detector": False,
     "detector_type": "template",
-    "yolo_config": {"model_path": "yolo11n.pt", "confidence": 0.25, "device": "cpu"},
     "template_config": {
         "templates_dir": DEFAULT_PATHS["templates"],
         "threshold": 0.85,
@@ -226,15 +217,9 @@ def get_hopping_config() -> Dict[str, Any]:
     return HOPPING_CONFIG.copy()
 
 
-def get_detector_config(detector_type: str = "yolo") -> Dict[str, Any]:
-    """Get Detector configuration (yolo or template)"""
-    if detector_type not in ["yolo", "template"]:
-        logger.warning(f"Unknown detector type: {detector_type}, using 'yolo'")
-        detector_type = "yolo"
-    config = DETECTOR_CONFIG[detector_type].copy()
-    if detector_type == "yolo":
-        config["quantity_extraction"] = DETECTOR_CONFIG["quantity_extraction"].copy()
-    return config
+def get_detector_config() -> Dict[str, Any]:
+    """Get Detector configuration (template matching)"""
+    return DETECTOR_CONFIG["template"].copy()
 
 
 def merge_config(

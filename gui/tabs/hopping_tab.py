@@ -266,9 +266,6 @@ class HoppingTab(BaseAutomationTab):
             except Exception as err:
                 logger.warning(f"Resume check failed: {err}")
 
-        # Initialize progress
-        self.progress_panel.start(total_count)
-
         # Call parent implementation
         super().start_automation()
 

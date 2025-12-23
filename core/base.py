@@ -10,7 +10,8 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 import cv2
-from airtest.core.api import Template, exists, sleep
+from airtest.core.api import Template, exists, sleep, wait
+from airtest.core.error import TargetNotFoundError
 
 from .agent import Agent
 from .config import DEFAULT_TOUCH_TIMES
@@ -241,13 +242,16 @@ class BaseAutomation:
         template_name: str,
         optional: bool = False,
         times: int = DEFAULT_TOUCH_TIMES,
+        timeout: Optional[float] = None,
     ) -> bool:
-        """Touch template image on screen with cancellation support.
+        """Touch template image on screen with cancellation support and adaptive wait.
 
         Args:
             template_name: Name of template image file in templates directory.
             optional: If True, returns True even if template not found (default: False).
             times: Number of times to touch the template (default: 1).
+            timeout: Max wait time in seconds (adaptive wait). If None, checks immediately (unless times > 1, where it might not wait at all).
+                     If provided (e.g. 30), waits up to that many seconds for template to appear.
 
         Returns:
             bool: True if template found and touched successfully, or if optional=True.
@@ -261,8 +265,34 @@ class BaseAutomation:
                     logger.error("Device not connected")
                 return optional
 
-            pos = exists(Template(template_path))
+            # Adaptive wait or immediate check
+            pos = None
+            if timeout is not None and timeout > 0:
+                logger.info(f"Waiting for {template_name}... (timeout: {timeout}s)")
+
+                # Helper to check cancellation during wait
+                def _check_cancel_callback():
+                    try:
+                        self.check_cancelled(f"waiting for {template_name}")
+                        return False  # Continue waiting
+                    except CancellationError:
+                        raise
+
+                try:
+                    pos = wait(
+                        Template(template_path),
+                        timeout=timeout,
+                        interval=0.5,
+                        intervalfunc=_check_cancel_callback
+                    )
+                except (TargetNotFoundError, CancellationError):
+                    pos = None
+            else:
+                 pos = exists(Template(template_path))
+
             if not pos:
+                if timeout is not None and timeout > 0 and not optional:
+                     logger.warning(f"✗ Timeout waiting for {template_name} ({timeout}s)")
                 return optional
 
             for i in range(times):
@@ -272,6 +302,10 @@ class BaseAutomation:
                     f" (touch #{i+1}/{times})" if times > 1 else ""
                 )
                 logger.info(log_msg)
+                
+                # If touching multiple times, we might want to re-check existence? 
+                # Original logic didn't re-check, so adhering to that for now.
+                
                 if i < times - 1:
                     sleep(self.wait_after_touch * 0.5)
 
@@ -284,6 +318,15 @@ class BaseAutomation:
             if not optional:
                 logger.error(f"✗ {template_name}: {e}")
             return optional
+
+    def wait_and_touch_template(
+        self,
+        template_name: str,
+        timeout: Optional[float] = None,
+        interval: float = 0.5,
+    ) -> bool:
+        """Wrapper for touch_template with timeout (for backward compatibility)."""
+        return self.touch_template(template_name, timeout=timeout or 30)
 
     def touch_template_while_exists(
         self,

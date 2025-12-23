@@ -43,10 +43,8 @@ from core.config import (
 )
 from core.data import ResultWriter, load_data
 from core.detector import (
-    YOLO_AVAILABLE,
     OCRTextProcessor,
     TemplateMatcher,
-    YOLODetector,
 )
 from core.utils import StructuredLogger, ensure_directory, get_logger
 
@@ -57,7 +55,7 @@ class FestivalAutomation(BaseAutomation):
     """Festival automation with OCR verification and optional detector support.
 
     This class automates festival gameplay by navigating menus, verifying game state
-    through OCR and optional object detection, and recording results. Supports resume
+    through OCR and template matching, and recording results. Supports resume
     functionality for interrupted sessions.
     """
 
@@ -106,48 +104,14 @@ class FestivalAutomation(BaseAutomation):
         )
 
     def _create_detector(self, cfg: Dict[str, Any], agent: Agent) -> Optional[Any]:
-        """Factory method for creating detectors (YOLO or Template Matching)."""
-        detector_type = cfg.get("detector_type", "template")
-
-        if detector_type == "auto":
-            if YOLO_AVAILABLE:
-                try:
-                    yolo_config = cfg.get("yolo_config", {})
-                    logger.info("Using YOLO Detector")
-                    return YOLODetector(
-                        agent=agent,
-                        model_path=yolo_config.get("model_path", "yolo11n.pt"),
-                        confidence=yolo_config.get("confidence", 0.25),
-                        device=yolo_config.get("device", "cpu"),
-                    )
-                except Exception as e:
-                    logger.warning(f"YOLO init failed: {e}, fallback to Template")
-            detector_type = "template"
-
-        if detector_type == "yolo":
-            try:
-                yolo_config = cfg.get("yolo_config", {})
-                logger.info("Using YOLO Detector")
-                return YOLODetector(
-                    agent=agent,
-                    model_path=yolo_config.get("model_path", "yolo11n.pt"),
-                    confidence=yolo_config.get("confidence", 0.25),
-                    device=yolo_config.get("device", "cpu"),
-                )
-            except Exception as e:
-                logger.error(f"YOLO init failed: {e}")
-                return None
-
-        if detector_type == "template":
-            template_config = cfg.get("template_config", {})
-            logger.info("Using Template Matcher")
-            return TemplateMatcher(
-                templates_dir=template_config.get("templates_dir", self.templates_path),
-                threshold=template_config.get("threshold", 0.85),
-                ocr_engine=agent.ocr_engine,
-            )
-
-        return None
+        """Factory method for creating template matcher detector."""
+        template_config = cfg.get("template_config", {})
+        logger.info("Using Template Matcher")
+        return TemplateMatcher(
+            templates_dir=template_config.get("templates_dir", self.templates_path),
+            threshold=template_config.get("threshold", 0.85),
+            ocr_engine=agent.ocr_engine,
+        )
 
     def _manage_resume_state(self, action: str, **kwargs) -> Optional[Dict[str, Any]]:
         """Manage resume state: load, save, complete, or clear.
@@ -245,7 +209,7 @@ class FestivalAutomation(BaseAutomation):
         screenshot: Optional[Any] = None,
         roi_image: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        """Detect objects in ROI using detector (YOLO/Template)."""
+        """Detect objects in ROI using detector (Template)."""
         result = {
             "roi_name": roi_name,
             "detected": False,
@@ -478,7 +442,7 @@ class FestivalAutomation(BaseAutomation):
         Args:
             stage_data: Dictionary containing stage information (name, rank, expected rewards, etc.).
             stage_idx: Stage index number for logging and tracking.
-            use_detector: Enable YOLO/Template detector for item verification (default: False).
+            use_detector: Enable Template detector for item verification (default: False).
 
         Returns:
             Dict[str, Any]: Result dictionary with keys:
@@ -512,9 +476,9 @@ class FestivalAutomation(BaseAutomation):
             step1 = ExecutionStep(
                 step_num=1,
                 name="Touch Event Button",
-                action=lambda: self.touch_template("tpl_event.png"),
-                max_retries=max_retries,
-                retry_delay=retry_delay,
+                action=lambda: self.wait_and_touch_template("tpl_event.png", timeout=30),
+                max_retries=1,
+                retry_delay=0,
                 post_delay=0.5,
                 cancel_checker=self.check_cancelled,
                 logger=self.structured_logger,
@@ -751,9 +715,9 @@ class FestivalAutomation(BaseAutomation):
             step7 = ExecutionStep(
                 step_num=7,
                 name="Touch Challenge Button",
-                action=lambda: self.touch_template("tpl_challenge.png"),
-                max_retries=max_retries,
-                retry_delay=retry_delay,
+                action=lambda: self.wait_and_touch_template("tpl_challenge.png", timeout=30),
+                max_retries=1,
+                retry_delay=0,
                 post_delay=2,
                 cancel_checker=self.check_cancelled,
                 logger=self.structured_logger,
@@ -797,9 +761,9 @@ class FestivalAutomation(BaseAutomation):
             step10 = ExecutionStep(
                 step_num=10,
                 name="Touch All Skip Button",
-                action=lambda: self.touch_template("tpl_allskip.png"),
-                max_retries=max_retries,
-                retry_delay=retry_delay,
+                action=lambda: self.wait_and_touch_template("tpl_allskip.png", timeout=30),
+                max_retries=1,
+                retry_delay=0,
                 post_delay=0.5,
                 cancel_checker=self.check_cancelled,
                 logger=self.structured_logger,
@@ -826,9 +790,9 @@ class FestivalAutomation(BaseAutomation):
             step12 = ExecutionStep(
                 step_num=12,
                 name="Touch Result Button",
-                action=lambda: self.touch_template("tpl_result.png"),
-                max_retries=max_retries,
-                retry_delay=retry_delay,
+                action=lambda: self.wait_and_touch_template("tpl_result.png", timeout=30),
+                max_retries=1,
+                retry_delay=0,
                 post_delay=0.5,
                 cancel_checker=self.check_cancelled,
                 logger=self.structured_logger,
@@ -996,7 +960,7 @@ class FestivalAutomation(BaseAutomation):
         Args:
             data_path: Path to CSV/JSON file with test data
             output_path: Output result path (None = auto-detect from resume or auto-generate)
-            use_detector: Use detector (YOLO/Template)
+            use_detector: Use detector (Template)
             resume: Resume from existing results if available (default: True)
             force_new_session: Force start new session even if resume state exists (default: False)
             start_stage_index: Index of stage to start from (1-based, default: 1)
@@ -1282,7 +1246,7 @@ class FestivalAutomation(BaseAutomation):
 
         Args:
             data_path: Path to CSV/JSON file with test data
-            use_detector: Use detector (YOLO/Template)
+            use_detector: Use detector (Template)
             output_path: Output result path (None = auto-detect from resume or auto-generate)
             force_new_session: Force start new session even if resume state exists
             start_stage_index: Index of stage to start from (1-based, default: 1)

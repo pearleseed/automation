@@ -1,7 +1,6 @@
 """Core package for automation framework."""
 
 from .detector import (
-    YOLO_AVAILABLE,
     DetectionResult,
     OCRTextProcessor,
     TemplateMatcher,
@@ -13,5 +12,4 @@ __all__ = [
     "TemplateMatcher",
     "TextProcessor",
     "OCRTextProcessor",
-    "YOLO_AVAILABLE",
 ]

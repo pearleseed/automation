@@ -1,11 +1,9 @@
 """
-Item Detector Module - YOLO and Template Matching for automated detection.
+Item Detector Module - Template Matching for automated detection.
 
-This module provides three main components:
-1. YOLODetector - AI-based object detection with YOLO
-2. TemplateMatcher - Template-based detection with OpenCV
-3. OCRTextProcessor - Advanced OCR text processing and validation
-
+This module provides:
+1. TemplateMatcher - Template-based detection with OpenCV
+2. OCRTextProcessor - Advanced OCR text processing and validation
 """
 
 import os
@@ -23,36 +21,13 @@ from .utils import get_logger
 
 logger = get_logger(__name__)
 
-# YOLO is disabled for faster launch and lighter build
-# To re-enable: set YOLO_DISABLED = False and uncomment ultralytics in requirements.txt
-YOLO_DISABLED = True
-
-YOLO_AVAILABLE = False
-YOLO: Any = None
-torch: Any = None
-
-if not YOLO_DISABLED:
-    # Conditional YOLO import
-    try:
-        import torch as _torch  # type: ignore
-        from ultralytics import YOLO as _YOLO  # type: ignore
-
-        torch = _torch
-        YOLO = _YOLO
-        YOLO_AVAILABLE = True
-        logger.info("YOLO available")
-    except ImportError:
-        logger.warning("YOLO not available. Install: pip install ultralytics torch")
-else:
-    logger.info("YOLO disabled (set YOLO_DISABLED = False to enable)")
-
 
 # ==================== DATA CLASSES ====================
 
 
 @dataclass
 class DetectionResult:
-    """Result from YOLO or Template detection."""
+    """Result from Template detection."""
 
     item: str
     quantity: int = 0
@@ -567,193 +542,6 @@ class OCRTextProcessor:
 
     normalize_text_for_comparison = staticmethod(TextProcessor.normalize_text)
     compare_with_template = staticmethod(TextProcessor.fuzzy_match)
-
-
-# ==================== YOLO DETECTOR ====================
-
-
-class YOLODetector:
-    """YOLO-based item detector with OCR quantity extraction.
-
-    This class uses YOLO object detection to identify items in screenshots
-    and extracts quantities using OCR on regions adjacent to detected items.
-    """
-
-    def __init__(
-        self,
-        agent: Agent,
-        model_path: str = "yolo11n.pt",
-        confidence: float = 0.25,
-        device: str = "cpu",
-    ):
-        """Initialize YOLO detector with model and configuration.
-
-        Args:
-            agent: Agent instance for OCR operations.
-            model_path: Path to YOLO model file (default: 'yolo11n.pt').
-            confidence: Detection confidence threshold 0.0-1.0 (default: 0.25).
-            device: Device for inference - 'cpu', 'cuda', 'mps', or 'auto' (default: 'cpu').
-
-        Raises:
-            RuntimeError: If YOLO is not available or model loading fails.
-        """
-        self.agent = agent
-        self.model_path = model_path
-        self.confidence = confidence
-        self.device = device
-        self.model: Optional[Any] = None
-
-        if not YOLO_AVAILABLE:
-            logger.error("YOLO not available")
-            raise RuntimeError(
-                "YOLO not available. Install: pip install ultralytics torch"
-            )
-
-        self._init_model()
-
-    def _init_model(self) -> None:
-        """Load YOLO model and configure device."""
-        try:
-            if YOLO is None:
-                raise RuntimeError("YOLO not available")
-
-            logger.info(f"Loading YOLO model from {self.model_path}...")
-            self.model = YOLO(self.model_path)
-
-            if self.model is None:
-                raise RuntimeError("Failed to load YOLO model")
-
-            if self.device == "auto" and torch is not None:
-                if torch.cuda.is_available():
-                    self.device = "cuda"
-                elif (
-                    hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-                ):
-                    self.device = "mps"
-                else:
-                    self.device = "cpu"
-
-            logger.info(f"YOLO model loaded on device: {self.device}")
-
-        except Exception as e:
-            logger.error(f"YOLO initialization failed: {e}")
-            raise
-
-    def detect(
-        self,
-        image: np.ndarray,
-        conf: Optional[float] = None,
-        iou: float = 0.45,
-        imgsz: int = 640,
-    ) -> List[DetectionResult]:
-        """Detect items in image using YOLO with OCR quantity extraction.
-
-        Args:
-            image: Input image as NumPy array (BGR format).
-            conf: Confidence threshold (default: uses instance confidence).
-            iou: IoU threshold for NMS (default: 0.45).
-            imgsz: Input image size for model (default: 640).
-
-        Returns:
-            List[DetectionResult]: List of detected items with bounding boxes, confidence, and quantities.
-        """
-        if self.model is None:
-            logger.error("YOLO model not initialized")
-            return []
-
-        if conf is None:
-            conf = self.confidence
-
-        try:
-            # Run detection
-            results = self.model.predict(
-                source=image,
-                conf=conf,
-                iou=iou,
-                imgsz=imgsz,
-                device=self.device,
-                verbose=False,
-            )
-
-            found_items = []
-
-            # Process results
-            for result in results:
-                boxes = result.boxes
-                if boxes is None or len(boxes) == 0:
-                    continue
-
-                for box in boxes:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                    confidence = float(box.conf[0])
-                    class_id = int(box.cls[0])
-                    item_name = result.names[class_id]
-
-                    # Extract quantity via OCR
-                    quantity, ocr_text = self._extract_quantity(image, (x1, y1, x2, y2))
-
-                    # Use dataclass
-                    found_items.append(
-                        DetectionResult(
-                            item=item_name,
-                            quantity=quantity,
-                            x=x1,
-                            y=y1,
-                            x2=x2,
-                            y2=y2,
-                            confidence=confidence,
-                            ocr_text=ocr_text,
-                        )
-                    )
-
-            logger.info(f"🎯 YOLO detected {len(found_items)} items")
-            return found_items
-
-        except Exception as e:
-            logger.error(f"YOLO detection error: {e}")
-            return []
-
-    def _extract_quantity(
-        self,
-        image: np.ndarray,
-        bbox: Tuple[int, int, int, int],
-        offset_x: int = 30,
-        offset_y: int = 0,
-        roi_width: int = 80,
-        roi_height: int = 30,
-    ) -> Tuple[int, str]:
-        """Extract item quantity using OCR (reuses TextProcessor)."""
-        x1, y1, x2, y2 = bbox
-        img_h, img_w = image.shape[:2]
-
-        quantity_x1, quantity_y1 = max(0, x2 + offset_x), max(0, y2 + offset_y)
-        quantity_x2, quantity_y2 = min(img_w, quantity_x1 + roi_width), min(
-            img_h, quantity_y1 + roi_height
-        )
-
-        if quantity_x1 >= quantity_x2 or quantity_y1 >= quantity_y2:
-            return 0, ""
-        quantity_roi = image[quantity_y1:quantity_y2, quantity_x1:quantity_x2]
-        if quantity_roi.size == 0:
-            return 0, ""
-
-        try:
-            if self.agent.ocr_engine is None:
-                return 0, ""
-            ocr_text = self.agent.ocr_engine.recognize(quantity_roi).get("text", "")
-            return self._parse_quantity_text(ocr_text), ocr_text
-        except Exception as e:
-            logger.debug(f"Quantity OCR error: {e}")
-            return 0, ""
-
-    @staticmethod
-    def _parse_quantity_text(text: str) -> int:
-        """Parse quantity from text (uses TextProcessor)."""
-        if not text:
-            return 0
-        text = text.strip().lstrip("xX").strip()
-        numbers = TextProcessor.extract_numbers(text)
-        return numbers[0] if numbers else 0
 
 
 # ==================== TEMPLATE MATCHER ====================

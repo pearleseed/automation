@@ -35,26 +35,7 @@ a = Analysis(
         ('data/hopping.csv', 'data'),
     ],
     hiddenimports=[
-        # Core Python modules
-        'logging',
-        'queue',
-        'threading',
-        'json',
-        'csv',
-        'tempfile',
-        'datetime',
-        'collections',
-        'functools',
-        'dataclasses',
-        're',
-        'os',
-        'sys',
-        'time',
-        'pathlib',
-        'ctypes',
-        'difflib',
-        
-        # Tkinter GUI
+        # Tkinter GUI (sometimes needs explicit import)
         'tkinter',
         'tkinter.ttk',
         'tkinter.messagebox',
@@ -93,7 +74,6 @@ a = Analysis(
         'gui',
         'gui.components',
         'gui.components.base_tab',
-        'gui.components.progress_panel',
         'gui.components.quick_actions_panel',
         'gui.tabs',
         'gui.tabs.festival_tab',
@@ -121,11 +101,15 @@ a = Analysis(
         'setuptools',
         'pip',
         'wheel',
-        # Exclude YOLO/ultralytics (disabled in code)
+        # Exclude YOLO/ultralytics/PyTorch (completely removed)
         'ultralytics',
         'torch',
         'torchvision',
         'torchaudio',
+        'onnx',
+        'onnxruntime-gpu',
+        'tensorboard',
+        'tensorflow',
         # Exclude web server modules (not needed for GUI)
         'uvicorn',
         'fastapi',
@@ -137,17 +121,36 @@ a = Analysis(
         'unittest',
         'test',
         'tests',
+        # Additional excludes for smaller build
+        'email',
+        'html',
+        'http',
+        'xml',
+        'pydoc',
+        'doctest',
+        'argparse',
+        'optparse',
+        'getopt',
+        'bdb',
+        'pdb',
+        'profile',
+        'cProfile',
+        'timeit',
+        'trace',
+        'lib2to3',
+        'distutils',
+        'ensurepip',
+        'venv',
+        'idlelib',
+        'tkinter.tix',
+        'turtle',
+        'turtledemo',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=None,
     noarchive=False,
 )
-
-# Add YOLO model if it exists (optional - YOLO is disabled by default)
-yolo_model = os.path.join(project_root, 'yolo11n.pt')
-if os.path.exists(yolo_model):
-    a.datas.append(('yolo11n.pt', '.'))
 
 # PYZ archive
 pyz = PYZ(
