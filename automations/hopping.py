@@ -27,10 +27,7 @@ from core.data import (
     group_hopping_by_course,
     load_hopping_data,
 )
-from core.detector import (
-    OCRTextProcessor,
-    TemplateMatcher,
-)
+from core.detector import OCRTextProcessor, TemplateMatcher
 from core.utils import StructuredLogger, ensure_directory, get_logger
 
 logger = get_logger(__name__)
@@ -44,16 +41,22 @@ class HoppingAutomation(BaseAutomation):
     """
 
     def __init__(
-        self, agent: Agent, config: Optional[Dict[str, Any]] = None, cancel_event=None,
-        pause_event=None, preview_callback=None
+        self,
+        agent: Agent,
+        config: Optional[Dict[str, Any]] = None,
+        cancel_event=None,
+        pause_event=None,
+        preview_callback=None,
     ):
         base_config = get_hopping_config()
         cfg = merge_config(base_config, config) if config else base_config
         super().__init__(
-            agent, cfg, HOPPING_ROI_CONFIG, 
+            agent,
+            cfg,
+            HOPPING_ROI_CONFIG,
             cancel_event=cancel_event,
             pause_event=pause_event,
-            preview_callback=preview_callback
+            preview_callback=preview_callback,
         )
 
         self.config = cfg
@@ -372,13 +375,19 @@ class HoppingAutomation(BaseAutomation):
 
                 # Check if we got any extracted data
                 if not extracted or all(
-                    not v.get("text", "").strip() if isinstance(v, dict) else not str(v).strip()
+                    (
+                        not v.get("text", "").strip()
+                        if isinstance(v, dict)
+                        else not str(v).strip()
+                    )
                     for v in extracted.values()
                 ):
                     # No data extracted - mark as unverified (Draw Unchecked)
                     is_verified = False
                     is_ok = False
-                    self.structured_logger.warning("Verification: No data extracted - Draw Unchecked")
+                    self.structured_logger.warning(
+                        "Verification: No data extracted - Draw Unchecked"
+                    )
                     return True
 
                 # Compare with expected data from CSV
@@ -423,7 +432,9 @@ class HoppingAutomation(BaseAutomation):
             # ==================== FINAL RESULT ====================
 
             duration = time.time() - start_time
-            result_label = "OK" if is_ok else ("Draw Unchecked" if not is_verified else "NG")
+            result_label = (
+                "OK" if is_ok else ("Draw Unchecked" if not is_verified else "NG")
+            )
             self.structured_logger.stage_end(course_idx, is_ok, duration)
             self.structured_logger.info(f"Course {course_idx} Result: {result_label}")
 

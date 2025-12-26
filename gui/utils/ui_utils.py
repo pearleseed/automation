@@ -262,8 +262,10 @@ class UIUtils:
 
 # ==================== TOOLTIPS ====================
 
+
 class ToolTip:
     """Hover tooltip for widgets with configurable delay."""
+
     def __init__(self, widget: tk.Widget, text: str, delay: int = 500):
         self.widget, self.text, self.delay = widget, text, delay
         self.tip_window = None
@@ -282,14 +284,27 @@ class ToolTip:
             self.scheduled = None
 
     def _show(self, e=None):
-        if self.tip_window: return
-        x, y = self.widget.winfo_rootx() + 20, self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+        if self.tip_window:
+            return
+        x, y = (
+            self.widget.winfo_rootx() + 20,
+            self.widget.winfo_rooty() + self.widget.winfo_height() + 5,
+        )
         self.tip_window = tk.Toplevel(self.widget)
         self.tip_window.wm_overrideredirect(True)
         self.tip_window.wm_attributes("-topmost", True)
         frame = tk.Frame(self.tip_window, bg="#333", borderwidth=1, relief="solid")
         frame.pack()
-        tk.Label(frame, text=self.text, bg="#333", fg="#fff", font=("Segoe UI", 9), wraplength=250, padx=8, pady=5).pack()
+        tk.Label(
+            frame,
+            text=self.text,
+            bg="#333",
+            fg="#fff",
+            font=("Segoe UI", 9),
+            wraplength=250,
+            padx=8,
+            pady=5,
+        ).pack()
         self.tip_window.wm_geometry(f"+{x}+{y}")
 
     def _hide(self, e=None):
@@ -301,6 +316,7 @@ class ToolTip:
 
 class TooltipManager:
     """Centralized tooltip management with predefined tips."""
+
     TIPS = {
         "start_button": "Start automation (Ctrl+Enter)",
         "stop_button": "Stop automation (Ctrl+Q, ESC, F9)",

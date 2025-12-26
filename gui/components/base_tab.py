@@ -26,6 +26,7 @@ from gui.utils.ui_utils import UIUtils
 
 logger = get_logger(__name__)
 
+
 class BaseAutomationTab(ttk.Frame):
     """Base class for all automation tabs in the GUI.
 
@@ -226,8 +227,6 @@ class BaseAutomationTab(ttk.Frame):
         )
         self.stop_button.pack(side="left", ipady=8)
 
-
-
     def _setup_right_column(self, parent):
         """Setup right column with quick actions and status."""
 
@@ -246,12 +245,14 @@ class BaseAutomationTab(ttk.Frame):
         # Status box with indicator
         status_frame = ttk.LabelFrame(parent, text="Status", padding=8)
         status_frame.pack(fill="x", pady=5)
-        
+
         status_inner = ttk.Frame(status_frame)
         status_inner.pack(fill="x")
-        
+
         # Status indicator dot
-        self.status_canvas = tk.Canvas(status_inner, width=12, height=12, highlightthickness=0)
+        self.status_canvas = tk.Canvas(
+            status_inner, width=12, height=12, highlightthickness=0
+        )
         self.status_canvas.pack(side="left", padx=(0, 5))
         self._draw_status_indicator("ready")
 
@@ -280,11 +281,11 @@ class BaseAutomationTab(ttk.Frame):
     def _draw_status_indicator(self, status: str):
         """Draw status indicator dot with color based on status."""
         colors = {
-            "ready": "#4CAF50",      # Green
-            "running": "#2196F3",    # Blue
-            "paused": "#FF9800",     # Orange
-            "error": "#F44336",      # Red
-            "stopped": "#9E9E9E",    # Gray
+            "ready": "#4CAF50",  # Green
+            "running": "#2196F3",  # Blue
+            "paused": "#FF9800",  # Orange
+            "error": "#F44336",  # Red
+            "stopped": "#9E9E9E",  # Gray
         }
         color = colors.get(status, "#9E9E9E")
         self.status_canvas.delete("all")
@@ -1079,9 +1080,7 @@ class BaseAutomationTab(ttk.Frame):
             self.status_var.set("Failed")
             self._draw_status_indicator("error")
             ErrorManager.error(
-                f"{self.tab_name} failed!",
-                details=error_msg,
-                show_toast=True
+                f"{self.tab_name} failed!", details=error_msg, show_toast=True
             )
 
     @property
@@ -1101,12 +1100,12 @@ class BaseAutomationTab(ttk.Frame):
         self.is_running = running
         self._is_paused = False
         self.pause_event.set()  # Ensure not paused
-        
+
         self.start_button.config(state="disabled" if running else "normal")
         self.stop_button.config(state="normal" if running else "disabled")
         self.pause_button.config(state="normal" if running else "disabled")
         self.pause_button.config(text="⏸ Pause")
-        
+
         if running:
             self.status_var.set("Running...")
             self._draw_status_indicator("running")
@@ -1142,10 +1141,10 @@ class BaseAutomationTab(ttk.Frame):
         """Toggle pause/resume state."""
         if not self.is_running:
             return
-        
+
         with self._state_lock:
             self._is_paused = not self._is_paused
-            
+
             if self._is_paused:
                 self.pause_event.clear()  # Block automation
                 self.pause_button.config(text="▶ Resume")
@@ -1159,12 +1158,6 @@ class BaseAutomationTab(ttk.Frame):
                 self.status_var.set("Running...")
                 self._draw_status_indicator("running")
                 logger.info(f"{self.tab_name} resumed")
-
-
-
-
-
-
 
     @property
     def automation_instance(self) -> Optional[Any]:
@@ -1291,9 +1284,7 @@ class BaseAutomationTab(ttk.Frame):
         self.bind_all("<Control-p>", self._handle_pause_shortcut)
         self.bind_all("<Control-Return>", self._handle_start_shortcut)
 
-        logger.debug(
-            f"{self.tab_name} tab: Keyboard shortcuts enabled"
-        )
+        logger.debug(f"{self.tab_name} tab: Keyboard shortcuts enabled")
 
     def _handle_stop_shortcut(self, event):
         """Handle keyboard shortcut for stopping automation."""

@@ -75,16 +75,22 @@ class GachaAutomation(BaseAutomation):
     """
 
     def __init__(
-        self, agent: Agent, config: Optional[Dict[str, Any]] = None, cancel_event=None,
-        pause_event=None, preview_callback=None
+        self,
+        agent: Agent,
+        config: Optional[Dict[str, Any]] = None,
+        cancel_event=None,
+        pause_event=None,
+        preview_callback=None,
     ):
         base_config = get_gacha_config()
         cfg = merge_config(base_config, config) if config else base_config
         super().__init__(
-            agent, cfg, GACHA_ROI_CONFIG, 
+            agent,
+            cfg,
+            GACHA_ROI_CONFIG,
             cancel_event=cancel_event,
             pause_event=pause_event,
-            preview_callback=preview_callback
+            preview_callback=preview_callback,
         )
 
         self.config = cfg

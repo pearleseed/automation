@@ -194,9 +194,7 @@ def load_hopping_data(
     return processed_data
 
 
-def group_hopping_by_course(
-    hopping_data: List[Dict[str, Any]]
-) -> List[Dict[str, Any]]:
+def group_hopping_by_course(hopping_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Group hopping spots by course for automation.
 
     Args:
@@ -399,7 +397,6 @@ def write_json(
         return False
 
 
-
 # ==================== RESULT WRITER CLASS ====================
 
 
@@ -542,7 +539,6 @@ class ResultWriter:
         if "json" in self.formats:
             if not write_json(f"{self.base_path}.json", self.results):
                 success = False
-
 
         if success and clear_after_write:
             self.clear()

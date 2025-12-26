@@ -9,11 +9,15 @@ from tkinter import messagebox, ttk
 
 from core.agent import Agent
 from core.utils import get_logger
-from gui.utils.logging_utils import ErrorHistoryPanel, ErrorManager
 from gui.tabs.festival_tab import FestivalTab
 from gui.tabs.gacha_tab import GachaTab
 from gui.tabs.hopping_tab import HoppingTab
-from gui.utils.logging_utils import LogViewer, QueueHandler
+from gui.utils.logging_utils import (
+    ErrorHistoryPanel,
+    ErrorManager,
+    LogViewer,
+    QueueHandler,
+)
 from gui.utils.thread_utils import get_thread_manager, shutdown_thread_manager
 
 logger = get_logger(__name__)
@@ -57,9 +61,12 @@ class AutoCPeachGUI(tk.Tk):
 
         # Setup UI
         self.setup_ui()
-        
+
         # Initialize ErrorManager after UI is ready
-        ErrorManager.initialize(self, self.error_history_panel if hasattr(self, 'error_history_panel') else None)
+        ErrorManager.initialize(
+            self,
+            self.error_history_panel if hasattr(self, "error_history_panel") else None,
+        )
 
         # Check initial device status
         self.check_device()
@@ -230,11 +237,11 @@ class AutoCPeachGUI(tk.Tk):
         # Bottom pane: Log viewer and Error History
         bottom_frame = ttk.Frame(paned)
         paned.add(bottom_frame, weight=1)  # Give less weight to logs
-        
+
         # Create horizontal paned window for logs and errors
         bottom_paned = ttk.PanedWindow(bottom_frame, orient=tk.HORIZONTAL)
         bottom_paned.pack(fill="both", expand=True)
-        
+
         # Log viewer (left)
         log_frame = ttk.Frame(bottom_paned)
         bottom_paned.add(log_frame, weight=3)
@@ -245,14 +252,14 @@ class AutoCPeachGUI(tk.Tk):
             max_lines=int(self.max_log_lines_var.get()),
             poll_interval=200,
         )
-        
+
         # Error history panel (right)
         error_frame = ttk.Frame(bottom_paned)
         bottom_paned.add(error_frame, weight=1)
-        
+
         self.error_history_panel = ErrorHistoryPanel(error_frame)
         self.error_history_panel.pack(fill="both", expand=True)
-        
+
         # Re-initialize ErrorManager with the panel
         ErrorManager.initialize(self, self.error_history_panel)
 

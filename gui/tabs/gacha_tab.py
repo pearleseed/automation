@@ -683,7 +683,8 @@ class GachaTab(ttk.Frame):
                     "max_scroll_attempts": 10,
                 }
                 automation = GachaAutomation(
-                    self.agent, config, 
+                    self.agent,
+                    config,
                     cancel_event=self._cancel_event,
                     pause_event=self._pause_event,
                 )

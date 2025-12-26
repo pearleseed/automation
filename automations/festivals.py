@@ -42,10 +42,7 @@ from core.config import (
     merge_config,
 )
 from core.data import ResultWriter, load_data
-from core.detector import (
-    OCRTextProcessor,
-    TemplateMatcher,
-)
+from core.detector import OCRTextProcessor, TemplateMatcher
 from core.utils import StructuredLogger, ensure_directory, get_logger
 
 logger = get_logger(__name__)
@@ -60,16 +57,22 @@ class FestivalAutomation(BaseAutomation):
     """
 
     def __init__(
-        self, agent: Agent, config: Optional[Dict[str, Any]] = None, cancel_event=None,
-        pause_event=None, preview_callback=None
+        self,
+        agent: Agent,
+        config: Optional[Dict[str, Any]] = None,
+        cancel_event=None,
+        pause_event=None,
+        preview_callback=None,
     ):
         base_config = get_festival_config()
         cfg = merge_config(base_config, config) if config else base_config
         super().__init__(
-            agent, cfg, FESTIVALS_ROI_CONFIG, 
+            agent,
+            cfg,
+            FESTIVALS_ROI_CONFIG,
             cancel_event=cancel_event,
             pause_event=pause_event,
-            preview_callback=preview_callback
+            preview_callback=preview_callback,
         )
 
         self.config = cfg
@@ -476,7 +479,9 @@ class FestivalAutomation(BaseAutomation):
             step1 = ExecutionStep(
                 step_num=1,
                 name="Touch Event Button",
-                action=lambda: self.wait_and_touch_template("tpl_event.png", timeout=30),
+                action=lambda: self.wait_and_touch_template(
+                    "tpl_event.png", timeout=30
+                ),
                 max_retries=1,
                 retry_delay=0,
                 post_delay=0.5,
@@ -715,7 +720,9 @@ class FestivalAutomation(BaseAutomation):
             step7 = ExecutionStep(
                 step_num=7,
                 name="Touch Challenge Button",
-                action=lambda: self.wait_and_touch_template("tpl_challenge.png", timeout=30),
+                action=lambda: self.wait_and_touch_template(
+                    "tpl_challenge.png", timeout=30
+                ),
                 max_retries=1,
                 retry_delay=0,
                 post_delay=2,
@@ -761,7 +768,9 @@ class FestivalAutomation(BaseAutomation):
             step10 = ExecutionStep(
                 step_num=10,
                 name="Touch All Skip Button",
-                action=lambda: self.wait_and_touch_template("tpl_allskip.png", timeout=30),
+                action=lambda: self.wait_and_touch_template(
+                    "tpl_allskip.png", timeout=30
+                ),
                 max_retries=1,
                 retry_delay=0,
                 post_delay=0.5,
@@ -790,7 +799,9 @@ class FestivalAutomation(BaseAutomation):
             step12 = ExecutionStep(
                 step_num=12,
                 name="Touch Result Button",
-                action=lambda: self.wait_and_touch_template("tpl_result.png", timeout=30),
+                action=lambda: self.wait_and_touch_template(
+                    "tpl_result.png", timeout=30
+                ),
                 max_retries=1,
                 retry_delay=0,
                 post_delay=0.5,

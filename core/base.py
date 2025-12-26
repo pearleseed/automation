@@ -187,13 +187,13 @@ class BaseAutomation:
 
     def wait_if_paused(self, context: str = "") -> None:
         """Wait if automation is paused, checking for cancellation periodically.
-        
+
         Args:
             context: Description of current operation for logging.
         """
         if self.pause_event is None:
             return
-        
+
         # Wait for pause_event to be set (not paused)
         while not self.pause_event.is_set():
             # Check for cancellation while paused
@@ -213,7 +213,7 @@ class BaseAutomation:
         """
         # First check for pause
         self.wait_if_paused(context)
-        
+
         # Then check for cancellation
         if self.is_cancelled():
             logger.info(
@@ -223,9 +223,11 @@ class BaseAutomation:
             )
             raise CancellationError(context=context)
 
-    def update_preview(self, screenshot=None, ocr_text: str = "", confidence: float = 0.0):
+    def update_preview(
+        self, screenshot=None, ocr_text: str = "", confidence: float = 0.0
+    ):
         """Update live preview if callback is set (thread-safe).
-        
+
         Args:
             screenshot: Screenshot image array.
             ocr_text: OCR result text.
@@ -283,16 +285,18 @@ class BaseAutomation:
                         Template(template_path),
                         timeout=timeout,
                         interval=0.5,
-                        intervalfunc=_check_cancel_callback
+                        intervalfunc=_check_cancel_callback,
                     )
                 except (TargetNotFoundError, CancellationError):
                     pos = None
             else:
-                 pos = exists(Template(template_path))
+                pos = exists(Template(template_path))
 
             if not pos:
                 if timeout is not None and timeout > 0 and not optional:
-                     logger.warning(f"✗ Timeout waiting for {template_name} ({timeout}s)")
+                    logger.warning(
+                        f"✗ Timeout waiting for {template_name} ({timeout}s)"
+                    )
                 return optional
 
             for i in range(times):
@@ -302,10 +306,10 @@ class BaseAutomation:
                     f" (touch #{i+1}/{times})" if times > 1 else ""
                 )
                 logger.info(log_msg)
-                
-                # If touching multiple times, we might want to re-check existence? 
+
+                # If touching multiple times, we might want to re-check existence?
                 # Original logic didn't re-check, so adhering to that for now.
-                
+
                 if i < times - 1:
                     sleep(self.wait_after_touch * 0.5)
 
@@ -473,10 +477,10 @@ class BaseAutomation:
 
             text = self._clean_ocr_text(ocr_result.get("text", "").strip())
             confidence = ocr_result.get("confidence", 0.8)
-            
+
             # Update live preview with OCR result
             self.update_preview(ocr_text=f"[{roi_name}] {text}", confidence=confidence)
-            
+
             logger.debug(f"ROI '{roi_name}': '{text}'")
             return text
 
